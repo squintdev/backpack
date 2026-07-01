@@ -18,7 +18,9 @@
 
 pub mod error;
 pub mod kdf;
+pub mod pubkey;
 pub mod stream;
 
 pub use error::{Error, Result};
-pub use stream::{open, seal, MAGIC};
+pub use pubkey::{open_as_recipient, seal_to_recipient};
+pub use stream::{open, open_with_key, seal, seal_with_key, MAGIC};

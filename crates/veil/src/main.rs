@@ -1,16 +1,17 @@
-//! `veil` — encrypt and decrypt files with a passphrase.
+//! `veil` — encrypt and decrypt files with a passphrase or a public key.
 //!
 //! ```text
-//! veil enc secret.pdf            # -> secret.pdf.veil
-//! veil dec secret.pdf.veil       # -> secret.pdf
-//! cat data | veil enc > data.veil
+//! veil enc secret.pdf                     # passphrase -> secret.pdf.veil
+//! veil dec secret.pdf.veil                # passphrase
+//! veil enc -r alice.pub secret.pdf        # to alice's public key
+//! veil dec --identity alice secret.pdf.veil   # with alice's stored key
 //! ```
 
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 /// Extension appended to encrypted files.
@@ -20,21 +21,24 @@ const EXT: &str = "veil";
 #[command(
     name = "veil",
     version,
-    about = "Passphrase file encryptor",
-    long_about = "Encrypt and decrypt files with a passphrase.\n\n\
-        Uses Argon2id key derivation and chunked ChaCha20-Poly1305 authenticated \
-        encryption. Tampering, truncation, or a wrong passphrase are detected and \
-        rejected. File output is written atomically, so a failed run never leaves \
-        a partial destination file.",
+    about = "File encryptor (passphrase or public key)",
+    long_about = "Encrypt and decrypt files with a passphrase or a recipient's public key.\n\n\
+        Passphrase mode uses Argon2id key derivation; public-key mode uses X25519 \
+        key agreement to a keyring identity. Both drive chunked ChaCha20-Poly1305 \
+        authenticated encryption: tampering, truncation, or the wrong key are \
+        detected and rejected. File output is written atomically, so a failed run \
+        never leaves a partial destination file.",
     after_help = "EXAMPLES:\n  \
-        veil enc secret.pdf              Encrypt to secret.pdf.veil\n  \
-        veil dec secret.pdf.veil         Decrypt back to secret.pdf\n  \
-        veil enc notes.txt -o n.bin      Encrypt to a chosen name\n  \
-        tar c dir | veil enc > d.veil    Encrypt a stream\n  \
-        veil dec d.veil | tar x          Decrypt a stream\n\n\
+        veil enc secret.pdf              Passphrase-encrypt to secret.pdf.veil\n  \
+        veil dec secret.pdf.veil         Passphrase-decrypt\n  \
+        veil enc -r alice.pub secret.pdf     Encrypt to alice's public key\n  \
+        veil dec --identity alice f.veil     Decrypt with alice's stored key\n  \
+        tar c dir | veil enc > d.veil    Encrypt a stream\n\n\
         ENVIRONMENT:\n  \
-        VEIL_PASSPHRASE   If set, used instead of prompting (for scripts/CI).\n\n\
-        SECURITY: v0.1, unaudited. Passphrase strength determines security."
+        VEIL_PASSPHRASE        Passphrase for passphrase mode (scripts/CI).\n  \
+        CIPHERPUNK_PASSPHRASE  Keystore passphrase for --identity.\n  \
+        CIPHERPUNK_KEYRING     Keystore path for --identity.\n\n\
+        SECURITY: v0.1, unaudited."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -56,6 +60,17 @@ struct Io {
     /// Output file. Omit to derive from input, or "-" for stdout.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// (enc) Encrypt to this recipient public-identity file instead of a
+    /// passphrase (a `keyring export` line).
+    #[arg(short = 'r', long)]
+    recipient: Option<PathBuf>,
+    /// (dec) Decrypt using this stored keyring identity instead of a passphrase.
+    #[arg(long)]
+    identity: Option<String>,
+    /// (dec) Keystore path for --identity (overrides the default and
+    /// $CIPHERPUNK_KEYRING).
+    #[arg(long)]
+    keyring: Option<PathBuf>,
 }
 
 fn main() {
@@ -74,8 +89,18 @@ fn run() -> Result<()> {
 }
 
 fn encrypt(io: Io) -> Result<()> {
-    let pass = prompt_new_passphrase()?;
     let out = default_enc_output(&io);
+
+    // Public-key mode: encrypt to a recipient's X25519 key, no passphrase.
+    if let Some(rp) = &io.recipient {
+        let txt = fs::read_to_string(rp).with_context(|| format!("reading {}", rp.display()))?;
+        let recipient = keyring::PublicIdentity::parse(&txt)?.x;
+        return with_streams(&io.input, &out, |r, w| {
+            cph_core::seal_to_recipient(r, w, &recipient).map_err(Into::into)
+        });
+    }
+
+    let pass = prompt_new_passphrase()?;
     with_streams(&io.input, &out, |r, w| {
         cph_core::seal(r, w, pass.as_bytes()).map_err(Into::into)
     })
@@ -84,16 +109,47 @@ fn encrypt(io: Io) -> Result<()> {
 /// Environment variable used to supply the passphrase non-interactively
 /// (scripting / CI). When set, prompting and confirmation are skipped.
 const PASS_ENV: &str = "VEIL_PASSPHRASE";
+/// Keystore passphrase environment variable (shared with `keyring`).
+const KEYSTORE_PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
 
 fn decrypt(io: Io) -> Result<()> {
+    let out = default_dec_output(&io)?;
+
+    // Public-key mode: decrypt with a stored identity's X25519 secret.
+    if let Some(name) = &io.identity {
+        let path = io
+            .keyring
+            .clone()
+            .or_else(keyring::default_keystore_path)
+            .ok_or_else(|| anyhow!("cannot locate keystore; set CIPHERPUNK_KEYRING or --keyring"))?;
+        let pass = keystore_passphrase()?;
+        let store = keyring::KeyStore::open(&path, pass.as_bytes())?;
+        let sk = store
+            .get(name)
+            .ok_or_else(|| anyhow!("no identity named {name:?} in keystore"))?
+            .x_secret();
+        return with_streams(&io.input, &out, |r, w| {
+            cph_core::open_as_recipient(r, w, &sk).map_err(Into::into)
+        });
+    }
+
     let pass = match std::env::var(PASS_ENV) {
         Ok(p) => p,
         Err(_) => rpassword::prompt_password("Passphrase: ").context("reading passphrase")?,
     };
-    let out = default_dec_output(&io)?;
     with_streams(&io.input, &out, |r, w| {
         cph_core::open(r, w, pass.as_bytes()).map_err(Into::into)
     })
+}
+
+/// Keystore passphrase from `$CIPHERPUNK_PASSPHRASE` or an interactive prompt.
+fn keystore_passphrase() -> Result<String> {
+    match std::env::var(KEYSTORE_PASS_ENV) {
+        Ok(p) => Ok(p),
+        Err(_) => {
+            rpassword::prompt_password("Keystore passphrase: ").context("reading passphrase")
+        }
+    }
 }
 
 /// Obtain a passphrase for encryption: from `VEIL_PASSPHRASE` if set,

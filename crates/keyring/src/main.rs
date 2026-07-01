@@ -19,12 +19,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use keyring::{format_signature, parse_signature, KeyStore, PublicIdentity};
+use keyring::{
+    default_keystore_path, format_signature, parse_signature, KeyStore, PublicIdentity, PATH_ENV,
+};
 
 /// Environment variable holding the keystore passphrase (skips prompting).
 const PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
-/// Environment variable overriding the keystore path.
-const PATH_ENV: &str = "CIPHERPUNK_KEYRING";
 
 #[derive(Parser)]
 #[command(
@@ -196,12 +196,8 @@ fn store_path(cli: &Cli) -> Result<PathBuf> {
     if let Some(p) = &cli.keyring {
         return Ok(p.clone());
     }
-    if let Ok(p) = std::env::var(PATH_ENV) {
-        return Ok(PathBuf::from(p));
-    }
-    let dirs = directories::ProjectDirs::from("", "", "cipherpunk")
-        .ok_or_else(|| anyhow!("cannot determine config directory; set {PATH_ENV}"))?;
-    Ok(dirs.config_dir().join("keyring.veil"))
+    default_keystore_path()
+        .ok_or_else(|| anyhow!("cannot determine config directory; set {PATH_ENV}"))
 }
 
 /// Obtain the keystore passphrase from $CIPHERPUNK_PASSPHRASE or by prompting.

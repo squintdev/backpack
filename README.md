@@ -53,6 +53,19 @@ veil dec d.veil | tar x          # decrypt a stream
 - File output is written to a temp sibling and atomically renamed on success,
   so a wrong passphrase or error never leaves a truncated file.
 
+**Public-key mode** — encrypt to a `keyring` identity, no shared passphrase:
+
+```sh
+keyring export alice > alice.pub
+veil enc -r alice.pub secret.pdf          # anyone can encrypt to alice
+veil dec --identity alice secret.pdf.veil # only alice's key decrypts
+```
+
+Uses X25519 key agreement with a fresh ephemeral key per file (anonymous
+sender), then the same ChaCha20-Poly1305 stream. `--identity` unlocks the
+keystore (`$CIPHERPUNK_PASSPHRASE` / prompt); `--keyring` / `$CIPHERPUNK_KEYRING`
+override its path.
+
 Run `veil --help` for all options.
 
 ### `scrub` — metadata stripper
@@ -139,29 +152,34 @@ Run `keyring --help` for all options.
 
 | Concern            | Choice                                                    |
 |--------------------|-----------------------------------------------------------|
-| Key derivation     | Argon2id, 64 MiB memory, 3 passes, 16-byte random salt    |
+| Passphrase KDF     | Argon2id, 64 MiB memory, 3 passes, 16-byte random salt    |
+| Public-key agreement | X25519 ECDH, ephemeral sender, HKDF-SHA256 to the key   |
 | Encryption         | ChaCha20-Poly1305 AEAD, 64 KiB chunks                     |
 | Chunk nonce        | 7-byte random prefix ‖ 4-byte counter ‖ 1-byte last-flag  |
 | Key handling       | zeroized on drop                                          |
 
-**Stream format** (`veil` files):
+**Stream formats:**
 
 ```
-MAGIC "VEIL1\n" (6) ‖ salt (16) ‖ prefix (7) ‖ chunk_0 ‖ chunk_1 ‖ … ‖ chunk_n
+passphrase:  MAGIC "VEIL1\n" (6)  ‖ salt (16)          ‖ prefix (7) ‖ chunks…
+public key:  MAGIC "VEILX1\n" (7) ‖ ephemeral_pub (32) ‖ prefix (7) ‖ chunks…
 ```
 
 Each chunk is `ciphertext ‖ Poly1305 tag (16)`. The per-chunk counter binds
 ordering and the final-chunk flag binds end-of-stream, so **reordering or
-truncating chunks fails authentication**. A fresh random salt and nonce prefix
-per file means encrypting the same input twice yields different ciphertext.
+truncating chunks fails authentication**. Fresh randomness per file (salt in
+passphrase mode, ephemeral key in public-key mode) means encrypting the same
+input twice yields different ciphertext. Public-key mode rejects low-order
+recipient points (all-zero shared secret).
 
 ### Threat model
 
 - **Protects:** confidentiality and integrity of file contents at rest against
-  an attacker who holds the ciphertext but not the passphrase.
-- **Does not protect:** file size (leaked), file metadata (use `scrub`, planned),
-  or against a weak passphrase. No forward secrecy; passphrase compromise
-  decrypts all files it protected.
+  an attacker who holds the ciphertext but not the key. Public-key mode hides
+  the sender's identity (anonymous ephemeral sender).
+- **Does not protect:** file size (leaked), file metadata (use `scrub`), or
+  against a weak passphrase. No forward secrecy in passphrase mode; no sender
+  authentication in public-key mode (anyone can encrypt to a public key).
 
 ## License
 
