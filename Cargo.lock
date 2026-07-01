@@ -316,8 +316,11 @@ version = "0.1.0"
 dependencies = [
  "argon2",
  "chacha20poly1305",
+ "hkdf",
  "rand_core 0.6.4",
+ "sha2",
  "thiserror 2.0.18",
+ "x25519-dalek",
  "zeroize",
 ]
 
@@ -641,6 +644,24 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hkdf"
+version = "0.12.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b5f8eb2ad728638ea2c7d47a21db23b7b58a72ed6a38256b8a1849f15fbbdf7"
+dependencies = [
+ "hmac",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
 
 [[package]]
 name = "iana-time-zone"
@@ -1485,6 +1506,7 @@ dependencies = [
  "anyhow",
  "clap",
  "cph-core",
+ "keyring",
  "rpassword",
 ]
 

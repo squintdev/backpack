@@ -98,6 +98,12 @@ impl KeyPair {
     pub fn sign(&self, msg: &[u8]) -> [u8; 64] {
         self.signing_key().sign(msg).to_bytes()
     }
+
+    /// The raw X25519 secret key, for public-key decryption (`veil` recipient
+    /// mode). Zeroized on drop.
+    pub fn x_secret(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(*self.x_sk)
+    }
 }
 
 /// The shareable public half of an identity.
@@ -293,6 +299,22 @@ impl KeyStore {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
+
+/// Environment variable overriding the keystore path.
+pub const PATH_ENV: &str = "CIPHERPUNK_KEYRING";
+
+/// Default keystore path: `$CIPHERPUNK_KEYRING`, else the per-user config dir.
+///
+/// Returns `None` only if neither the env var is set nor a config directory can
+/// be determined. Shared so other suite tools (e.g. `veil` recipient mode) look
+/// in the same place.
+pub fn default_keystore_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(PATH_ENV) {
+        return Some(PathBuf::from(p));
+    }
+    directories::ProjectDirs::from("", "", "cipherpunk")
+        .map(|d| d.config_dir().join("keyring.veil"))
 }
 
 fn validate_name(name: &str) -> Result<()> {

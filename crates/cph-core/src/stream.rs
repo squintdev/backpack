@@ -11,11 +11,13 @@
 //! The counter binds chunk order (reordering breaks authentication) and the
 //! final flag binds the end of stream (truncation breaks authentication).
 //!
-//! On-disk layout:
-//! ```text
-//! MAGIC (6) || salt (16) || prefix (7) || chunk_0 || chunk_1 || ... || chunk_n
-//! ```
-//! where each `chunk_i` is `ciphertext || tag(16)`.
+//! Two entry points share the same chunk machinery:
+//!
+//! * Passphrase mode ([`seal`]/[`open`]) derives the key with Argon2id and
+//!   frames it as `MAGIC || salt || <body>`.
+//! * Key mode ([`seal_with_key`]/[`open_with_key`]) takes a caller-supplied
+//!   32-byte key and writes only the `<body>` (`prefix || chunks`), leaving the
+//!   header to the caller (see the `pubkey` module).
 
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
@@ -25,7 +27,7 @@ use std::io::{Read, Write};
 use crate::error::{Error, Result};
 use crate::kdf::{self, SALT_LEN};
 
-/// Stream format magic + version.
+/// Stream format magic + version for passphrase mode.
 pub const MAGIC: &[u8; 6] = b"VEIL1\n";
 /// Random nonce prefix length, in bytes.
 const PREFIX_LEN: usize = 7;
@@ -56,25 +58,15 @@ fn fill<R: Read + ?Sized>(reader: &mut R, buf: &mut [u8]) -> Result<usize> {
     Ok(n)
 }
 
-/// Encrypt `reader` into `writer` using a passphrase.
-///
-/// A fresh random salt and nonce prefix are generated per call, so encrypting
-/// the same input twice yields different ciphertext.
-pub fn seal<R: Read + ?Sized, W: Write + ?Sized>(
+/// Encrypt the body: a random nonce prefix followed by the sealed chunks.
+fn seal_body<R: Read + ?Sized, W: Write + ?Sized>(
     reader: &mut R,
     writer: &mut W,
-    passphrase: &[u8],
+    key: &[u8; 32],
 ) -> Result<()> {
-    let mut salt = [0u8; SALT_LEN];
     let mut prefix = [0u8; PREFIX_LEN];
-    OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut prefix);
-
-    let key = kdf::derive_key(passphrase, &salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key[..]));
-
-    writer.write_all(MAGIC)?;
-    writer.write_all(&salt)?;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
     writer.write_all(&prefix)?;
 
     // Read-ahead by one chunk so we can flag the final chunk correctly, even
@@ -104,29 +96,15 @@ pub fn seal<R: Read + ?Sized, W: Write + ?Sized>(
     Ok(())
 }
 
-/// Decrypt `reader` into `writer` using a passphrase.
-///
-/// Fails with [`Error::Decrypt`] on a wrong passphrase or any tampering,
-/// including truncation or reordering of chunks.
-pub fn open<R: Read + ?Sized, W: Write + ?Sized>(
+/// Decrypt the body produced by [`seal_body`].
+fn open_body<R: Read + ?Sized, W: Write + ?Sized>(
     reader: &mut R,
     writer: &mut W,
-    passphrase: &[u8],
+    key: &[u8; 32],
 ) -> Result<()> {
-    let mut magic = [0u8; MAGIC.len()];
-    reader.read_exact(&mut magic).map_err(|_| Error::BadHeader)?;
-    if &magic != MAGIC {
-        return Err(Error::BadHeader);
-    }
-    let mut salt = [0u8; SALT_LEN];
     let mut prefix = [0u8; PREFIX_LEN];
-    reader.read_exact(&mut salt).map_err(|_| Error::BadHeader)?;
-    reader
-        .read_exact(&mut prefix)
-        .map_err(|_| Error::BadHeader)?;
-
-    let key = kdf::derive_key(passphrase, &salt)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key[..]));
+    reader.read_exact(&mut prefix).map_err(|_| Error::BadHeader)?;
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
 
     // Read-ahead by one ciphertext chunk to identify the final chunk by the
     // absence of following bytes, not by its size.
@@ -157,6 +135,65 @@ pub fn open<R: Read + ?Sized, W: Write + ?Sized>(
     }
     writer.flush()?;
     Ok(())
+}
+
+/// Encrypt `reader` into `writer` using a passphrase.
+///
+/// A fresh random salt and nonce prefix are generated per call, so encrypting
+/// the same input twice yields different ciphertext.
+pub fn seal<R: Read + ?Sized, W: Write + ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+    passphrase: &[u8],
+) -> Result<()> {
+    let mut salt = [0u8; SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    let key = kdf::derive_key(passphrase, &salt)?;
+
+    writer.write_all(MAGIC)?;
+    writer.write_all(&salt)?;
+    seal_body(reader, writer, &key)
+}
+
+/// Decrypt `reader` into `writer` using a passphrase.
+///
+/// Fails with [`Error::Decrypt`] on a wrong passphrase or any tampering,
+/// including truncation or reordering of chunks.
+pub fn open<R: Read + ?Sized, W: Write + ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+    passphrase: &[u8],
+) -> Result<()> {
+    let mut magic = [0u8; MAGIC.len()];
+    reader.read_exact(&mut magic).map_err(|_| Error::BadHeader)?;
+    if &magic != MAGIC {
+        return Err(Error::BadHeader);
+    }
+    let mut salt = [0u8; SALT_LEN];
+    reader.read_exact(&mut salt).map_err(|_| Error::BadHeader)?;
+    let key = kdf::derive_key(passphrase, &salt)?;
+    open_body(reader, writer, &key)
+}
+
+/// Encrypt `reader` into `writer` under a caller-supplied 32-byte key.
+///
+/// Writes only the stream body (`prefix || chunks`); the caller is responsible
+/// for any format header identifying how the key was established.
+pub fn seal_with_key<R: Read + ?Sized, W: Write + ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+    key: &[u8; 32],
+) -> Result<()> {
+    seal_body(reader, writer, key)
+}
+
+/// Decrypt a body produced by [`seal_with_key`] under the same 32-byte key.
+pub fn open_with_key<R: Read + ?Sized, W: Write + ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+    key: &[u8; 32],
+) -> Result<()> {
+    open_body(reader, writer, key)
 }
 
 #[cfg(test)]
@@ -226,5 +263,24 @@ mod tests {
             open(&mut &ct[..], &mut pt, b"pw"),
             Err(Error::Decrypt)
         ));
+    }
+
+    #[test]
+    fn key_mode_roundtrip() {
+        let key = [42u8; 32];
+        let data = vec![5u8; CHUNK + 7];
+        let mut ct = Vec::new();
+        seal_with_key(&mut &data[..], &mut ct, &key).unwrap();
+        let mut pt = Vec::new();
+        open_with_key(&mut &ct[..], &mut pt, &key).unwrap();
+        assert_eq!(pt, data);
+    }
+
+    #[test]
+    fn key_mode_wrong_key_fails() {
+        let mut ct = Vec::new();
+        seal_with_key(&mut &b"hi"[..], &mut ct, &[1u8; 32]).unwrap();
+        let mut pt = Vec::new();
+        assert!(open_with_key(&mut &ct[..], &mut pt, &[2u8; 32]).is_err());
     }
 }

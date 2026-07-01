@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 cph-core = { workspace = true }
+keyring = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 rpassword = { workspace = true }
