@@ -22,7 +22,8 @@ cipherpunk/
     │   ├── stream.rs     chunked ChaCha20-Poly1305 (STREAM)
     │   └── error.rs      typed errors
     ├── veil/             file encryptor CLI
-    └── scrub/            metadata stripper CLI (lib + bin)
+    ├── scrub/            metadata stripper CLI (lib + bin)
+    └── split/            Shamir secret sharing CLI (lib + bin)
 ```
 
 ## Build
@@ -72,6 +73,33 @@ scrub doc.pdf -o clean.pdf   # explicit output name
   place via atomic rename.
 
 Run `scrub --help` for all options.
+
+### `split` — Shamir secret sharing
+
+Split a secret into `n` shares where any `k` reconstruct it and any `k - 1`
+reveal nothing. For backups, inheritance, and multi-party recovery keys.
+
+```sh
+printf 'master password' | split deal -k 3 -n 5      # 5 shares to stdout
+split deal -k 2 -n 3 --input seed.txt --out-dir shares/
+split combine share-01.txt share-03.txt share-05.txt # -> secret to stdout
+cat shares/*.txt | split combine
+```
+
+Each share is one copy-pasteable line:
+
+```text
+SPLIT1-<k>-<index>-<hex share bytes>-<hex checksum>
+```
+
+- **Integrity, not just math:** a digest of the secret is split *with* it, so
+  wrong or insufficient shares are reported as an error instead of silently
+  returning garbage (plain Shamir cannot tell). A per-share checksum catches
+  typos before reconstruction.
+- Threshold `k = 1` is rejected (no protection). Any `k` shares reveal the
+  secret in full — store them separately.
+
+Run `split --help` for all options.
 
 ## Cryptography
 

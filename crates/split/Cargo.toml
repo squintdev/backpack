@@ -1,0 +1,19 @@
+[package]
+name = "split"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shamir secret sharing CLI for the cipherpunk suite"
+
+[[bin]]
+name = "split"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+sharks = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
