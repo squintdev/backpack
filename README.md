@@ -23,7 +23,8 @@ cipherpunk/
     │   └── error.rs      typed errors
     ├── veil/             file encryptor CLI
     ├── scrub/            metadata stripper CLI (lib + bin)
-    └── split/            Shamir secret sharing CLI (lib + bin)
+    ├── split/            Shamir secret sharing CLI (lib + bin)
+    └── keyring/          Ed25519/X25519 identity manager (lib + bin)
 ```
 
 ## Build
@@ -100,6 +101,37 @@ SPLIT1-<k>-<index>-<hex share bytes>-<hex checksum>
   secret in full — store them separately.
 
 Run `split --help` for all options.
+
+### `keyring` — identity manager
+
+Generate and manage signing/encryption identities. Each identity holds an
+Ed25519 signing keypair and an X25519 key-agreement keypair. Private keys live
+in a keystore that is **encrypted at rest** with `veil`'s crypto (`cph-core`):
+the on-disk file is a `VEIL1` ciphertext sealed under a passphrase.
+
+```sh
+keyring gen --name alice
+keyring list
+keyring export alice > alice.pub          # share this public line
+keyring sign --key alice msg.txt > msg.sig
+keyring verify alice.pub msg.txt msg.sig  # no passphrase needed
+```
+
+Public identities and signatures are single-line, copy-pasteable text:
+
+```text
+CPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
+CPSIG1 <ed25519 signature hex>
+```
+
+- Keystore defaults to `~/.config/cipherpunk/keyring.veil`; override with
+  `--keyring` or `$CIPHERPUNK_KEYRING`. Set `$CIPHERPUNK_PASSPHRASE` to skip
+  prompts (scripts/CI).
+- `verify` is stateless — it only needs the public line, message, and signature.
+- The X25519 key is published in `export` to enable public-key file encryption
+  (`veil` recipient mode, planned) without regenerating identities.
+
+Run `keyring --help` for all options.
 
 ## Cryptography
 
