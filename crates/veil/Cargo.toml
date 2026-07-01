@@ -1,0 +1,17 @@
+[package]
+name = "veil"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "File encryptor CLI for the cipherpunk suite"
+
+[[bin]]
+name = "veil"
+path = "src/main.rs"
+
+[dependencies]
+cph-core = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+rpassword = { workspace = true }

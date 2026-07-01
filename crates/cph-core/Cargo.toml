@@ -1,0 +1,14 @@
+[package]
+name = "cph-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared crypto primitives for the cipherpunk tool suite"
+
+[dependencies]
+chacha20poly1305 = { workspace = true }
+argon2 = { workspace = true }
+rand_core = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
