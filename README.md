@@ -21,7 +21,8 @@ cipherpunk/
     │   ├── kdf.rs        Argon2id passphrase → 32-byte key
     │   ├── stream.rs     chunked ChaCha20-Poly1305 (STREAM)
     │   └── error.rs      typed errors
-    └── veil/             file encryptor CLI
+    ├── veil/             file encryptor CLI
+    └── scrub/            metadata stripper CLI (lib + bin)
 ```
 
 ## Build
@@ -51,6 +52,26 @@ veil dec d.veil | tar x          # decrypt a stream
   so a wrong passphrase or error never leaves a truncated file.
 
 Run `veil --help` for all options.
+
+### `scrub` — metadata stripper
+
+Remove identifying metadata (EXIF/GPS, XMP, IPTC, PDF Info) before sharing files.
+
+```sh
+scrub photo.jpg              # -> photo.clean.jpg (original kept)
+scrub -n leak.pdf            # dry run: list what would be removed
+scrub -i a.jpg b.png         # overwrite in place
+scrub doc.pdf -o clean.pdf   # explicit output name
+```
+
+- Supported: **JPEG, PNG, PDF** (detected by content, not extension). Others are
+  reported and skipped.
+- Removes container metadata while keeping rendering data (ICC color profiles,
+  gamma). Does **not** touch watermarks or data embedded in the pixels/text.
+- Default writes `<name>.clean.<ext>` and keeps the original; `-i` overwrites in
+  place via atomic rename.
+
+Run `scrub --help` for all options.
 
 ## Cryptography
 
