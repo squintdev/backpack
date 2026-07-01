@@ -1,0 +1,18 @@
+[package]
+name = "scrub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metadata stripper CLI for the cipherpunk suite"
+
+[[bin]]
+name = "scrub"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+img-parts = { workspace = true }
+kamadak-exif = { workspace = true }
+lopdf = { workspace = true }
