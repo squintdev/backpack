@@ -1,232 +1,1196 @@
-//! Launcher state and key handling, free of terminal I/O so transitions are
-//! unit-testable. The event loop interprets the [`Action`] we return.
+//! Launcher application state: the unlock gate, one state machine per native
+//! tool screen, and the pending-op queue the main loop executes between
+//! frames (so a "WORKING" frame renders before any slow call).
+//!
+//! No terminal I/O here — everything is unit-testable.
 
+use std::path::{Path, PathBuf};
+
+use anyhow::{anyhow, bail, Result};
 use ratatui::crossterm::event::KeyCode;
 
-/// A launchable tool in the suite.
-pub struct Tool {
-    /// Binary name, resolved next to the launcher binary (or on PATH).
-    pub bin: &'static str,
-    /// Display name in the menu.
+use crate::form::{Field, Form, FormEvent};
+use crate::session::Session;
+
+// ---------------------------------------------------------------- home menu
+
+pub struct MenuEntry {
     pub name: &'static str,
-    /// One-line tagline shown in the menu row.
     pub tagline: &'static str,
-    /// Longer description for the detail pane.
     pub about: &'static [&'static str],
-    /// Example invocations shown in the detail pane.
-    pub examples: &'static [&'static str],
-    /// Full-screen TUI tool: hand over the terminal with no args prompt.
-    pub interactive: bool,
 }
 
-/// The tool registry: what the deck can boot into.
-pub const TOOLS: &[Tool] = &[
-    Tool {
-        bin: "keyring-tui",
-        name: "KEYRING",
-        tagline: "identity mgr [TUI]",
+pub const MENU: &[MenuEntry] = &[
+    MenuEntry {
+        name: "IDENTITIES",
+        tagline: "keys & npubs",
         about: &[
-            "Manage Ed25519/X25519 identities in a passphrase-encrypted store.",
-            "Browse, generate, export, and delete. Signing lives in the CLI.",
+            "Your Ed25519/X25519/secp256k1 identities, in the encrypted store.",
+            "Generate, export, delete; see each identity's npub.",
         ],
-        examples: &["(interactive — opens full-screen)"],
-        interactive: true,
     },
-    Tool {
-        bin: "veil",
-        name: "VEIL",
-        tagline: "file encryption",
-        about: &[
-            "Encrypt/decrypt files with a passphrase or a recipient's public key.",
-            "Argon2id + ChaCha20-Poly1305; X25519 for recipient mode.",
-        ],
-        examples: &[
-            "enc secret.pdf",
-            "dec secret.pdf.veil",
-            "enc -r alice.pub secret.pdf",
-            "dec --identity alice secret.pdf.veil",
-        ],
-        interactive: false,
-    },
-    Tool {
-        bin: "scrub",
-        name: "SCRUB",
-        tagline: "metadata stripper",
-        about: &[
-            "Strip EXIF/GPS, XMP, IPTC, and PDF metadata before sharing.",
-            "JPEG, PNG, PDF — detected by content, not extension.",
-        ],
-        examples: &["-n photo.jpg", "photo.jpg", "-i a.jpg b.png"],
-        interactive: false,
-    },
-    Tool {
-        bin: "split",
-        name: "SPLIT",
-        tagline: "shamir sharing",
-        about: &[
-            "Split a secret into n shares where any k reconstruct it.",
-            "Wrong or insufficient shares are detected, not silently wrong.",
-        ],
-        examples: &[
-            "deal -k 3 -n 5 --input seed.txt --out-dir shares/",
-            "combine shares/share-1.txt shares/share-3.txt shares/share-5.txt",
-        ],
-        interactive: false,
-    },
-    Tool {
-        bin: "nostr",
+    MenuEntry {
         name: "NOSTR",
         tagline: "decentralized notes",
         about: &[
-            "Publish and read Nostr notes with a keyring identity.",
-            "Signed with your key, spread across relays no one owns.",
+            "Publish and read Nostr notes, signed with an identity.",
+            "Spread across relays no one owns.",
         ],
-        examples: &[
-            "whoami --identity alice",
-            "post --identity alice \"hello world\"",
-            "fetch --author npub1... --limit 5",
-        ],
-        interactive: false,
     },
-    Tool {
-        bin: "keyring",
+    MenuEntry {
+        name: "VEIL",
+        tagline: "file encryption",
+        about: &[
+            "Encrypt/decrypt files with a passphrase or to a person.",
+            "Argon2id + ChaCha20-Poly1305; X25519 recipient mode.",
+        ],
+    },
+    MenuEntry {
+        name: "SCRUB",
+        tagline: "metadata stripper",
+        about: &[
+            "Strip EXIF/GPS, XMP, and PDF metadata before sharing.",
+            "Preview first, then write a cleaned copy.",
+        ],
+    },
+    MenuEntry {
+        name: "SPLIT",
+        tagline: "shamir sharing",
+        about: &[
+            "Split a secret into n shares where any k recover it.",
+            "Wrong or missing shares are detected, never silent garbage.",
+        ],
+    },
+    MenuEntry {
         name: "SIGN/VERIFY",
         tagline: "signatures",
         about: &[
-            "Sign files and verify signatures with keyring identities.",
-            "verify is stateless: needs only the public line + message + sig.",
+            "Sign files with an identity; verify anyone's signature",
+            "from their public line. Verification needs no passphrase.",
         ],
-        examples: &[
-            "sign --key alice msg.txt",
-            "verify alice.pub msg.txt msg.sig",
-            "list",
-        ],
-        interactive: false,
     },
 ];
 
-/// What the event loop should do after a key press.
-#[derive(Debug, PartialEq, Eq)]
-pub enum Action {
-    /// Keep drawing.
-    None,
-    /// Leave the launcher.
-    Quit,
-    /// Hand the terminal to a full-screen tool (no args).
-    RunInteractive { bin: &'static str },
-    /// Run a CLI tool with the user's args, show output, wait for a key.
-    RunCommand { bin: &'static str, args: String },
-    /// Drop to a shell.
-    Shell,
+// ---------------------------------------------------------------- screens
+
+pub enum IdMode {
+    List,
+    New(Form),
+    ConfirmDelete,
 }
 
-/// Which interaction mode the launcher is in.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Mode {
-    Menu,
-    /// Typing arguments for the selected (non-interactive) tool.
-    Args,
+pub struct IdentitiesState {
+    pub selected: usize,
+    pub mode: IdMode,
+    pub status: String,
+}
+
+pub enum NostrMode {
+    Menu(usize),
+    Whoami(Form),
+    Post(Form),
+    ConfirmPost { identity: String, text: String },
+    Fetch(Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const NOSTR_MENU: &[&str] = &[
+    "WHOAMI  show my npub",
+    "POST    publish a note",
+    "FETCH   read an author",
+];
+
+pub enum VeilMode {
+    Menu(usize),
+    Form(usize, Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const VEIL_MENU: &[&str] = &[
+    "ENCRYPT  with a passphrase",
+    "ENCRYPT  to a recipient (.pub)",
+    "DECRYPT  with a passphrase",
+    "DECRYPT  with my identity",
+];
+
+pub enum ScrubMode {
+    Form(Form),
+    Report { path: String, lines: Vec<String>, changed: bool },
+    Results { lines: Vec<String> },
+}
+
+pub enum SplitMode {
+    Menu(usize),
+    Deal(Form),
+    Combine(Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const SPLIT_MENU: &[&str] = &[
+    "DEAL     split a secret into shares",
+    "COMBINE  recover from shares",
+];
+
+pub enum SignMode {
+    Menu(usize),
+    Sign(Form),
+    Verify(Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const SIGN_MENU: &[&str] = &[
+    "SIGN     a file with my identity",
+    "VERIFY   someone's signature",
+];
+
+pub enum Screen {
+    Home { selected: usize },
+    Identities(IdentitiesState),
+    Nostr(NostrMode),
+    Veil(VeilMode),
+    Scrub(ScrubMode),
+    Split(SplitMode),
+    Sign(SignMode),
+}
+
+// ---------------------------------------------------------------- pending ops
+
+/// Slow work queued by a key handler; the main loop draws a WORKING frame,
+/// then calls [`App::execute`].
+pub enum Pending {
+    NostrPost { identity: String, text: String },
+    NostrFetch { author: String, limit: u32 },
+    VeilEncPass { input: String, output: String, pass: String },
+    VeilEncRecipient { input: String, pub_path: String, output: String },
+    VeilDecPass { input: String, output: String, pass: String },
+    VeilDecIdentity { input: String, identity: String, output: String },
+}
+
+// ---------------------------------------------------------------- gate + app
+
+pub enum Gate {
+    /// Waiting for the keystore passphrase (masked, in-TUI).
+    Locked { form: Form, creating: bool },
+    Open(Session),
 }
 
 pub struct App {
-    pub selected: usize,
-    pub mode: Mode,
-    pub args: String,
-    /// Last command + trimmed output, shown in the detail pane after a run.
-    pub last_run: Option<(String, String)>,
-}
-
-impl Default for App {
-    fn default() -> Self {
-        App {
-            selected: 0,
-            mode: Mode::Menu,
-            args: String::new(),
-            last_run: None,
-        }
-    }
+    pub gate: Gate,
+    pub screen: Screen,
+    pub pending: Option<Pending>,
+    pub should_quit: bool,
+    pub shell_requested: bool,
 }
 
 impl App {
-    pub fn tool(&self) -> &'static Tool {
-        &TOOLS[self.selected]
-    }
-
-    pub fn on_key(&mut self, code: KeyCode) -> Action {
-        match self.mode {
-            Mode::Menu => self.on_key_menu(code),
-            Mode::Args => self.on_key_args(code),
+    pub fn new() -> Self {
+        let creating = Session::is_new();
+        let fields = if creating {
+            vec![
+                Field::masked("new keystore passphrase"),
+                Field::masked("confirm passphrase"),
+            ]
+        } else {
+            vec![Field::masked("keystore passphrase")]
+        };
+        let title = if creating { "create keystore" } else { "unlock keystore" };
+        App {
+            gate: Gate::Locked { form: Form::new(title, fields), creating },
+            screen: Screen::Home { selected: 0 },
+            pending: None,
+            should_quit: false,
+            shell_requested: false,
         }
     }
 
-    fn on_key_menu(&mut self, code: KeyCode) -> Action {
-        match code {
-            KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.selected = (self.selected + 1) % TOOLS.len();
-                Action::None
-            }
-            KeyCode::Char('k') | KeyCode::Up => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(TOOLS.len() - 1);
-                Action::None
-            }
-            KeyCode::Char('!') => Action::Shell,
-            KeyCode::Enter => {
-                let tool = self.tool();
-                if tool.interactive {
-                    Action::RunInteractive { bin: tool.bin }
-                } else {
-                    self.args.clear();
-                    self.mode = Mode::Args;
-                    Action::None
+    pub fn session(&self) -> Option<&Session> {
+        match &self.gate {
+            Gate::Open(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    // ------------------------------------------------------------- input
+
+    pub fn on_key(&mut self, code: KeyCode) {
+        if matches!(self.gate, Gate::Locked { .. }) {
+            self.on_key_locked(code);
+            return;
+        }
+        match &self.screen {
+            Screen::Home { .. } => self.on_key_home(code),
+            Screen::Identities(_) => self.on_key_identities(code),
+            Screen::Nostr(_) => self.on_key_nostr(code),
+            Screen::Veil(_) => self.on_key_veil(code),
+            Screen::Scrub(_) => self.on_key_scrub(code),
+            Screen::Split(_) => self.on_key_split(code),
+            Screen::Sign(_) => self.on_key_sign(code),
+        }
+    }
+
+    fn on_key_locked(&mut self, code: KeyCode) {
+        let Gate::Locked { form, creating } = &mut self.gate else {
+            return;
+        };
+        match form.on_key(code) {
+            FormEvent::Cancel => self.should_quit = true,
+            FormEvent::Editing => {}
+            FormEvent::Submit => {
+                let pass = form.value(0).to_string();
+                if pass.is_empty() {
+                    form.error = Some("passphrase must not be empty".into());
+                    return;
+                }
+                if *creating && form.value(1) != pass {
+                    form.error = Some("passphrases do not match".into());
+                    return;
+                }
+                match Session::unlock(&pass) {
+                    Ok(session) => self.gate = Gate::Open(session),
+                    Err(e) => form.error = Some(format!("{e}")),
                 }
             }
-            KeyCode::Char(c) => {
-                // Number keys jump straight to a tool.
-                if let Some(d) = c.to_digit(10) {
-                    let idx = d as usize;
-                    if idx >= 1 && idx <= TOOLS.len() {
-                        self.selected = idx - 1;
+        }
+    }
+
+    fn on_key_home(&mut self, code: KeyCode) {
+        let Screen::Home { selected } = &mut self.screen else {
+            return;
+        };
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('!') => self.shell_requested = true,
+            KeyCode::Char('j') | KeyCode::Down => *selected = (*selected + 1) % MENU.len(),
+            KeyCode::Char('k') | KeyCode::Up => {
+                *selected = selected.checked_sub(1).unwrap_or(MENU.len() - 1)
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                let idx = c.to_digit(10).unwrap() as usize;
+                if (1..=MENU.len()).contains(&idx) {
+                    *selected = idx - 1;
+                }
+            }
+            KeyCode::Enter => {
+                let idx = *selected;
+                self.screen = self.open_screen(idx);
+            }
+            _ => {}
+        }
+    }
+
+    fn open_screen(&self, idx: usize) -> Screen {
+        match idx {
+            0 => Screen::Identities(IdentitiesState {
+                selected: 0,
+                mode: IdMode::List,
+                status: String::new(),
+            }),
+            1 => Screen::Nostr(NostrMode::Menu(0)),
+            2 => Screen::Veil(VeilMode::Menu(0)),
+            3 => Screen::Scrub(ScrubMode::Form(Form::new(
+                "scrub a file",
+                vec![Field::new("file path")],
+            ))),
+            4 => Screen::Split(SplitMode::Menu(0)),
+            _ => Screen::Sign(SignMode::Menu(0)),
+        }
+    }
+
+    fn first_identity(&self) -> String {
+        self.session()
+            .and_then(Session::first_identity)
+            .unwrap_or_default()
+    }
+
+    // ------------------------------------------------------------- identities
+
+    fn on_key_identities(&mut self, code: KeyCode) {
+        let mut back_home = false;
+        {
+            let Gate::Open(session) = &mut self.gate else {
+                return;
+            };
+            let Screen::Identities(st) = &mut self.screen else {
+                return;
+            };
+            match &mut st.mode {
+                IdMode::List => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let n = session.identities().len();
+                        if n > 0 && st.selected + 1 < n {
+                            st.selected += 1;
+                        }
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        st.selected = st.selected.saturating_sub(1)
+                    }
+                    KeyCode::Char('g') => {
+                        st.mode = IdMode::New(Form::new("new identity", vec![Field::new("name")]));
+                    }
+                    KeyCode::Char('e') => {
+                        st.status = match export_identity(session, st.selected) {
+                            Ok(file) => format!("exported {file}"),
+                            Err(e) => format!("export failed: {e}"),
+                        };
+                    }
+                    KeyCode::Char('n') => {
+                        st.status = match nostr_init_selected(session, st.selected) {
+                            Ok(msg) => msg,
+                            Err(e) => format!("nostr-init failed: {e}"),
+                        };
+                    }
+                    KeyCode::Char('d') if !session.identities().is_empty() => {
+                        st.mode = IdMode::ConfirmDelete;
+                    }
+                    _ => {}
+                },
+                IdMode::New(form) => match form.on_key(code) {
+                    FormEvent::Cancel => st.mode = IdMode::List,
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let name = form.value(0).to_string();
+                        let generated = session.store.generate(&name).map(|_| ());
+                        match generated
+                            .map_err(anyhow::Error::from)
+                            .and_then(|_| session.save())
+                        {
+                            Ok(()) => {
+                                st.selected = session.identities().len().saturating_sub(1);
+                                st.status = format!("created {name}");
+                                st.mode = IdMode::List;
+                            }
+                            Err(e) => form.error = Some(format!("{e}")),
+                        }
+                    }
+                },
+                IdMode::ConfirmDelete => match code {
+                    KeyCode::Char('y') => {
+                        if let Some(id) = session.identities().get(st.selected).cloned() {
+                            session.store.remove(&id.name);
+                            st.status = match session.save() {
+                                Ok(()) => format!("removed {}", id.name),
+                                Err(e) => format!("save failed: {e}"),
+                            };
+                            st.selected = st
+                                .selected
+                                .min(session.identities().len().saturating_sub(1));
+                        }
+                        st.mode = IdMode::List;
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => st.mode = IdMode::List,
+                    _ => {}
+                },
+            }
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 0 };
+        }
+    }
+
+    // ------------------------------------------------------------- nostr
+
+    fn on_key_nostr(&mut self, code: KeyCode) {
+        let first = self.first_identity();
+        let mut back_home = false;
+        let mut queue: Option<Pending> = None;
+        {
+            let Gate::Open(session) = &self.gate else {
+                return;
+            };
+            let Screen::Nostr(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                NostrMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % NOSTR_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(NOSTR_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        *mode = match *sel {
+                            0 => NostrMode::Whoami(Form::new(
+                                "whoami",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
+                            1 => NostrMode::Post(Form::new(
+                                "post a note",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("text"),
+                                ],
+                            )),
+                            _ => NostrMode::Fetch(Form::new(
+                                "fetch notes",
+                                vec![
+                                    Field::new("author (npub or hex)"),
+                                    Field::new("limit").with_value("10"),
+                                ],
+                            )),
+                        };
+                    }
+                    _ => {}
+                },
+                NostrMode::Whoami(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let name = form.value(0).to_string();
+                        match nostr_whoami(session, &name) {
+                            Ok(lines) => {
+                                *mode = NostrMode::Results {
+                                    title: format!("{name}'s nostr key"),
+                                    lines,
+                                }
+                            }
+                            Err(e) => form.error = Some(format!("{e}")),
+                        }
+                    }
+                },
+                NostrMode::Post(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        let text = form.value(1).to_string();
+                        if text.is_empty() {
+                            form.error = Some("note text is empty".into());
+                        } else if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            *mode = NostrMode::ConfirmPost { identity, text };
+                        }
+                    }
+                },
+                NostrMode::ConfirmPost { identity, text } => match code {
+                    KeyCode::Char('y') => {
+                        queue = Some(Pending::NostrPost {
+                            identity: identity.clone(),
+                            text: text.clone(),
+                        });
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => *mode = NostrMode::Menu(1),
+                    _ => {}
+                },
+                NostrMode::Fetch(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(2),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let author = form.value(0).to_string();
+                        let limit: u32 = form.value(1).parse().unwrap_or(10);
+                        if author.is_empty() {
+                            form.error = Some("author is required".into());
+                        } else {
+                            queue = Some(Pending::NostrFetch { author, limit });
+                        }
+                    }
+                },
+                NostrMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = NostrMode::Menu(0);
                     }
                 }
-                Action::None
             }
-            _ => Action::None,
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 1 };
+        }
+        if queue.is_some() {
+            self.pending = queue;
         }
     }
 
-    fn on_key_args(&mut self, code: KeyCode) -> Action {
-        match code {
-            KeyCode::Esc => {
-                self.mode = Mode::Menu;
-                self.args.clear();
-                Action::None
-            }
-            KeyCode::Enter => {
-                self.mode = Mode::Menu;
-                let args = self.args.clone();
-                self.args.clear();
-                Action::RunCommand {
-                    bin: self.tool().bin,
-                    args,
+    // ------------------------------------------------------------- veil
+
+    fn on_key_veil(&mut self, code: KeyCode) {
+        let first = self.first_identity();
+        let mut back_home = false;
+        let mut queue: Option<Pending> = None;
+        {
+            let Screen::Veil(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                VeilMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % VEIL_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(VEIL_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => *mode = VeilMode::Form(*sel, veil_form(*sel, &first)),
+                    _ => {}
+                },
+                VeilMode::Form(op, form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = VeilMode::Menu(*op),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match veil_pending(*op, form) {
+                        Ok(p) => queue = Some(p),
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                VeilMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = VeilMode::Menu(0);
+                    }
                 }
             }
-            KeyCode::Backspace => {
-                self.args.pop();
-                Action::None
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 2 };
+        }
+        if queue.is_some() {
+            self.pending = queue;
+        }
+    }
+
+    // ------------------------------------------------------------- scrub
+
+    fn on_key_scrub(&mut self, code: KeyCode) {
+        let mut back_home = false;
+        {
+            let Screen::Scrub(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                ScrubMode::Form(form) => match form.on_key(code) {
+                    FormEvent::Cancel => back_home = true,
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let path = form.value(0).to_string();
+                        match scrub_scan(&path) {
+                            Ok((lines, changed)) => {
+                                *mode = ScrubMode::Report { path, lines, changed }
+                            }
+                            Err(e) => form.error = Some(format!("{e}")),
+                        }
+                    }
+                },
+                ScrubMode::Report { path, changed, .. } => match code {
+                    KeyCode::Enter if *changed => {
+                        let result = scrub_apply(path);
+                        *mode = ScrubMode::Results {
+                            lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        };
+                    }
+                    KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => {
+                        *mode = ScrubMode::Form(Form::new(
+                            "scrub a file",
+                            vec![Field::new("file path")],
+                        ));
+                    }
+                    _ => {}
+                },
+                ScrubMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = ScrubMode::Form(Form::new(
+                            "scrub a file",
+                            vec![Field::new("file path")],
+                        ));
+                    }
+                }
             }
-            KeyCode::Char(c) => {
-                self.args.push(c);
-                Action::None
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 3 };
+        }
+    }
+
+    // ------------------------------------------------------------- split
+
+    fn on_key_split(&mut self, code: KeyCode) {
+        let mut back_home = false;
+        {
+            let Screen::Split(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                SplitMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % SPLIT_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(SPLIT_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        *mode = if *sel == 0 {
+                            SplitMode::Deal(Form::new(
+                                "deal shares",
+                                vec![
+                                    Field::new("secret file"),
+                                    Field::new("k (threshold)").with_value("3"),
+                                    Field::new("n (shares)").with_value("5"),
+                                    Field::new("output directory").with_value("shares"),
+                                ],
+                            ))
+                        } else {
+                            SplitMode::Combine(Form::new(
+                                "combine shares",
+                                vec![
+                                    Field::new("share files (space-separated)"),
+                                    Field::new("write secret to (optional)")
+                                        .with_placeholder("display only"),
+                                ],
+                            ))
+                        };
+                    }
+                    _ => {}
+                },
+                SplitMode::Deal(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SplitMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match split_deal(form) {
+                        Ok(lines) => {
+                            *mode = SplitMode::Results { title: "shares dealt".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                SplitMode::Combine(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SplitMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match split_combine(form) {
+                        Ok(lines) => {
+                            *mode =
+                                SplitMode::Results { title: "secret recovered".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                SplitMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = SplitMode::Menu(0);
+                    }
+                }
             }
-            _ => Action::None,
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 4 };
+        }
+    }
+
+    // ------------------------------------------------------------- sign
+
+    fn on_key_sign(&mut self, code: KeyCode) {
+        let first = self.first_identity();
+        let mut back_home = false;
+        {
+            let Gate::Open(session) = &self.gate else {
+                return;
+            };
+            let Screen::Sign(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                SignMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % SIGN_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(SIGN_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        *mode = if *sel == 0 {
+                            SignMode::Sign(Form::new(
+                                "sign a file",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("message file"),
+                                ],
+                            ))
+                        } else {
+                            SignMode::Verify(Form::new(
+                                "verify a signature",
+                                vec![
+                                    Field::new("public line file (.pub)"),
+                                    Field::new("message file"),
+                                    Field::new("signature file (.sig)"),
+                                ],
+                            ))
+                        };
+                    }
+                    _ => {}
+                },
+                SignMode::Sign(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SignMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match sign_file(session, form) {
+                        Ok(lines) => *mode = SignMode::Results { title: "signed".into(), lines },
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                SignMode::Verify(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SignMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match verify_file(form) {
+                        Ok(lines) => {
+                            *mode = SignMode::Results { title: "verification".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                SignMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = SignMode::Menu(0);
+                    }
+                }
+            }
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 5 };
+        }
+    }
+
+    // ------------------------------------------------------------- pending
+
+    /// Execute a queued slow operation (the main loop calls this after
+    /// rendering a WORKING frame) and route the result to the right screen.
+    pub fn execute(&mut self, op: Pending) {
+        let Gate::Open(session) = &self.gate else {
+            return;
+        };
+        match op {
+            Pending::NostrPost { identity, text } => {
+                let result = nostr_post(session, &identity, &text);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "post".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                    };
+                }
+            }
+            Pending::NostrFetch { author, limit } => {
+                let result = nostr_fetch(&author, limit);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "fetch".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                    };
+                }
+            }
+            Pending::VeilEncPass { input, output, pass } => {
+                let r = veil_run_enc_pass(&input, &output, &pass);
+                self.finish_veil(r);
+            }
+            Pending::VeilEncRecipient { input, pub_path, output } => {
+                let r = veil_run_enc_recipient(&input, &pub_path, &output);
+                self.finish_veil(r);
+            }
+            Pending::VeilDecPass { input, output, pass } => {
+                let r = veil_run_dec_pass(&input, &output, &pass);
+                self.finish_veil(r);
+            }
+            Pending::VeilDecIdentity { input, identity, output } => {
+                let result = match session.store.get(&identity) {
+                    Some(kp) => {
+                        let sk = kp.x_secret();
+                        veil_run_dec_identity(&input, &sk, &output)
+                    }
+                    None => Err(anyhow!("no identity named {identity:?}")),
+                };
+                self.finish_veil(result);
+            }
+        }
+    }
+
+    fn finish_veil(&mut self, result: Result<Vec<String>>) {
+        if let Screen::Veil(mode) = &mut self.screen {
+            match result {
+                Ok(lines) => *mode = VeilMode::Results { title: "done".into(), lines },
+                Err(e) => match mode {
+                    VeilMode::Form(_, form) => form.error = Some(format!("{e}")),
+                    _ => {
+                        *mode = VeilMode::Results {
+                            title: "failed".into(),
+                            lines: vec![format!("{e}")],
+                        }
+                    }
+                },
+            }
         }
     }
 }
+
+// ---------------------------------------------------------------- operations
+
+fn export_identity(session: &Session, selected: usize) -> Result<String> {
+    let ids = session.identities();
+    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    let file = format!("{}.pub", id.name);
+    std::fs::write(&file, format!("{}\n", id.to_line()))?;
+    Ok(file)
+}
+
+fn nostr_init_selected(session: &mut Session, selected: usize) -> Result<String> {
+    let ids = session.identities();
+    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    let name = id.name.clone();
+    if session.store.nostr_init(&name)? {
+        session.save()?;
+        Ok(format!("added Nostr key to {name}"))
+    } else {
+        Ok(format!("{name} already has a Nostr key"))
+    }
+}
+
+/// The npub (and hex) for an identity in the session store.
+pub fn nostr_whoami(session: &Session, name: &str) -> Result<Vec<String>> {
+    let sk = session.nostr_key(name)?;
+    let pk_hex = bp_nostr::event::pubkey_hex(&sk)?;
+    let pk: [u8; 32] = hex::decode(&pk_hex).unwrap().try_into().unwrap();
+    Ok(vec![bp_nostr::nip19::npub_encode(&pk), pk_hex])
+}
+
+fn nostr_post(session: &Session, identity: &str, text: &str) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let ev = bp_nostr::event::sign_event(
+        &sk,
+        now,
+        bp_nostr::event::KIND_TEXT_NOTE,
+        vec![],
+        text.to_string(),
+    )?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let mut lines = vec![format!("event id {}", ev.id)];
+    let mut accepted = 0;
+    for (url, result) in bp_nostr::client::publish(&relays, &ev) {
+        match result {
+            Ok(_) => {
+                accepted += 1;
+                lines.push(format!("{url}: accepted"));
+            }
+            Err(e) => lines.push(format!("{url}: {e}")),
+        }
+    }
+    if accepted == 0 {
+        bail!("no relay accepted the note");
+    }
+    Ok(lines)
+}
+
+fn nostr_fetch(author: &str, limit: u32) -> Result<Vec<String>> {
+    let author_hex = bp_nostr::nip19::pubkey_to_hex(author)?;
+    let filter = bp_nostr::relay::Filter {
+        authors: Some(vec![author_hex]),
+        kinds: Some(vec![bp_nostr::event::KIND_TEXT_NOTE]),
+        limit: Some(limit),
+    };
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let (url, events, dropped) =
+        bp_nostr::client::fetch(&relays, &filter).map_err(|e| anyhow!(e))?;
+    let mut lines = Vec::new();
+    if events.is_empty() {
+        lines.push(format!("(no notes found on {url})"));
+    }
+    for ev in &events {
+        lines.push(format!("── {}… @ {}", &ev.pubkey[..12], ev.created_at));
+        for l in ev.content.lines() {
+            lines.push(format!("   {l}"));
+        }
+    }
+    lines.push(format!(
+        "({} notes from {url}, signatures verified{})",
+        events.len(),
+        if dropped > 0 {
+            format!(", {dropped} bad dropped")
+        } else {
+            String::new()
+        }
+    ));
+    Ok(lines)
+}
+
+fn veil_form(op: usize, first_identity: &str) -> Form {
+    match op {
+        0 => Form::new(
+            "encrypt with passphrase",
+            vec![
+                Field::new("input file"),
+                Field::new("output").with_placeholder("<input>.veil"),
+                Field::masked("passphrase"),
+                Field::masked("confirm passphrase"),
+            ],
+        ),
+        1 => Form::new(
+            "encrypt to recipient",
+            vec![
+                Field::new("input file"),
+                Field::new("recipient .pub file"),
+                Field::new("output").with_placeholder("<input>.veil"),
+            ],
+        ),
+        2 => Form::new(
+            "decrypt with passphrase",
+            vec![
+                Field::new("input file (.veil)"),
+                Field::new("output").with_placeholder("strip .veil"),
+                Field::masked("passphrase"),
+            ],
+        ),
+        _ => Form::new(
+            "decrypt with identity",
+            vec![
+                Field::new("input file (.veil)"),
+                Field::new("identity").with_value(first_identity),
+                Field::new("output").with_placeholder("strip .veil"),
+            ],
+        ),
+    }
+}
+
+fn veil_pending(op: usize, form: &Form) -> Result<Pending> {
+    let input = form.value(0).to_string();
+    if input.is_empty() {
+        bail!("input file is required");
+    }
+    match op {
+        0 => {
+            let pass = form.value(2).to_string();
+            if pass.is_empty() {
+                bail!("passphrase must not be empty");
+            }
+            if form.value(3) != pass {
+                bail!("passphrases do not match");
+            }
+            Ok(Pending::VeilEncPass { input, output: form.value(1).to_string(), pass })
+        }
+        1 => {
+            let pub_path = form.value(1).to_string();
+            if pub_path.is_empty() {
+                bail!("recipient .pub file is required");
+            }
+            Ok(Pending::VeilEncRecipient {
+                input,
+                pub_path,
+                output: form.value(2).to_string(),
+            })
+        }
+        2 => {
+            let pass = form.value(2).to_string();
+            if pass.is_empty() {
+                bail!("passphrase must not be empty");
+            }
+            Ok(Pending::VeilDecPass { input, output: form.value(1).to_string(), pass })
+        }
+        _ => {
+            let identity = form.value(1).to_string();
+            if identity.is_empty() {
+                bail!("identity is required");
+            }
+            Ok(Pending::VeilDecIdentity {
+                input,
+                identity,
+                output: form.value(2).to_string(),
+            })
+        }
+    }
+}
+
+fn enc_out(input: &Path, output: &str) -> PathBuf {
+    if output.is_empty() {
+        veil::enc_output_for(input)
+    } else {
+        PathBuf::from(output)
+    }
+}
+
+fn dec_out(input: &Path, output: &str) -> Result<PathBuf> {
+    if output.is_empty() {
+        veil::dec_output_for(input)
+    } else {
+        Ok(PathBuf::from(output))
+    }
+}
+
+fn veil_run_enc_pass(input: &str, output: &str, pass: &str) -> Result<Vec<String>> {
+    let input = Path::new(input);
+    let out = enc_out(input, output);
+    veil::encrypt_path(input, &out, &veil::EncKey::Passphrase(pass.as_bytes()))?;
+    Ok(vec![format!("encrypted -> {}", out.display())])
+}
+
+fn veil_run_enc_recipient(input: &str, pub_path: &str, output: &str) -> Result<Vec<String>> {
+    let txt = std::fs::read_to_string(pub_path)?;
+    let recipient = keyring::PublicIdentity::parse(&txt)?;
+    let input = Path::new(input);
+    let out = enc_out(input, output);
+    veil::encrypt_path(input, &out, &veil::EncKey::Recipient(recipient.x))?;
+    Ok(vec![format!(
+        "encrypted for {} -> {}",
+        recipient.name,
+        out.display()
+    )])
+}
+
+fn veil_run_dec_pass(input: &str, output: &str, pass: &str) -> Result<Vec<String>> {
+    let input = Path::new(input);
+    let out = dec_out(input, output)?;
+    veil::decrypt_path(input, &out, &veil::DecKey::Passphrase(pass.as_bytes()))?;
+    Ok(vec![format!("decrypted -> {}", out.display())])
+}
+
+fn veil_run_dec_identity(input: &str, sk: &[u8; 32], output: &str) -> Result<Vec<String>> {
+    let input = Path::new(input);
+    let out = dec_out(input, output)?;
+    veil::decrypt_path(input, &out, &veil::DecKey::IdentitySecret(sk))?;
+    Ok(vec![format!("decrypted -> {}", out.display())])
+}
+
+fn scrub_scan(path: &str) -> Result<(Vec<String>, bool)> {
+    let bytes = std::fs::read(path)?;
+    let (_, report) = scrub::strip(&bytes)?;
+    let mut lines = vec![format!("[{}]", report.format)];
+    if report.changed() {
+        for item in &report.removed {
+            lines.push(format!("- {item}"));
+        }
+        lines.push(String::new());
+        lines.push("Enter = write cleaned copy · Esc = cancel".to_string());
+    } else {
+        lines.push("already clean".to_string());
+    }
+    let changed = report.changed();
+    Ok((lines, changed))
+}
+
+fn scrub_apply(path: &str) -> Result<Vec<String>> {
+    let bytes = std::fs::read(path)?;
+    let (out, report) = scrub::strip(&bytes)?;
+    let p = Path::new(path);
+    let mut name = p
+        .file_stem()
+        .map(|s| s.to_os_string())
+        .unwrap_or_else(|| "out".into());
+    name.push(".clean");
+    if let Some(ext) = p.extension() {
+        name.push(".");
+        name.push(ext);
+    }
+    let dest = p.with_file_name(name);
+    std::fs::write(&dest, &out)?;
+    Ok(vec![
+        format!("removed {} item(s)", report.removed.len()),
+        format!("wrote {}", dest.display()),
+        "original kept unchanged".to_string(),
+    ])
+}
+
+fn split_deal(form: &Form) -> Result<Vec<String>> {
+    let secret = std::fs::read(form.value(0))
+        .map_err(|e| anyhow!("reading secret file {}: {e}", form.value(0)))?;
+    let k: u8 = form
+        .value(1)
+        .parse()
+        .map_err(|_| anyhow!("k must be a number"))?;
+    let n: u8 = form
+        .value(2)
+        .parse()
+        .map_err(|_| anyhow!("n must be a number"))?;
+    let dir = PathBuf::from(form.value(3));
+    let shares = split::deal(&secret, k, n)?;
+    std::fs::create_dir_all(&dir)?;
+    let mut lines = Vec::new();
+    for (i, s) in shares.iter().enumerate() {
+        let path = dir.join(format!("share-{}.txt", i + 1));
+        std::fs::write(&path, format!("{s}\n"))?;
+        lines.push(format!("wrote {}", path.display()));
+    }
+    lines.push(format!(
+        "any {k} of {n} recover the secret — store them separately"
+    ));
+    Ok(lines)
+}
+
+fn split_combine(form: &Form) -> Result<Vec<String>> {
+    let mut share_lines = Vec::new();
+    for path in form.value(0).split_whitespace() {
+        let text =
+            std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?;
+        share_lines.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| l.starts_with(split::TAG_PREFIX))
+                .map(str::to_string),
+        );
+    }
+    if share_lines.is_empty() {
+        bail!("no share lines found in those files");
+    }
+    let secret = split::combine(&share_lines)?;
+    let dest = form.value(1);
+    if dest.is_empty() {
+        Ok(vec![
+            "recovered secret:".to_string(),
+            String::from_utf8_lossy(&secret).to_string(),
+        ])
+    } else {
+        std::fs::write(dest, &secret)?;
+        Ok(vec![format!("recovered secret written to {dest}")])
+    }
+}
+
+fn sign_file(session: &Session, form: &Form) -> Result<Vec<String>> {
+    let identity = form.value(0);
+    let msg_path = form.value(1);
+    let kp = session
+        .store
+        .get(identity)
+        .ok_or_else(|| anyhow!("no identity named {identity:?}"))?;
+    let msg = std::fs::read(msg_path).map_err(|e| anyhow!("reading {msg_path}: {e}"))?;
+    let sig = kp.sign(&msg);
+    let sig_path = format!("{msg_path}.sig");
+    std::fs::write(&sig_path, format!("{}\n", keyring::format_signature(&sig)))?;
+    Ok(vec![format!("wrote {sig_path}")])
+}
+
+fn verify_file(form: &Form) -> Result<Vec<String>> {
+    let pub_txt = std::fs::read_to_string(form.value(0))
+        .map_err(|e| anyhow!("reading {}: {e}", form.value(0)))?;
+    let id = keyring::PublicIdentity::parse(&pub_txt)?;
+    let msg =
+        std::fs::read(form.value(1)).map_err(|e| anyhow!("reading {}: {e}", form.value(1)))?;
+    let sig_txt = std::fs::read_to_string(form.value(2))
+        .map_err(|e| anyhow!("reading {}: {e}", form.value(2)))?;
+    let sig = keyring::parse_signature(&sig_txt)?;
+    if id.verify(&msg, &sig) {
+        Ok(vec![format!(
+            "OK: valid signature by {} [{}]",
+            id.name,
+            id.fingerprint()
+        )])
+    } else {
+        Ok(vec!["BAD: signature does not verify".to_string()])
+    }
+}
+
+// ---------------------------------------------------------------- tests
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Tests mutate the process-wide BACKPACK_KEYRING env var — serialize them.
+    fn env_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn fresh_store_env() -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!(
+            "launcher-app-{}-{n}.veil",
+            std::process::id()
+        ));
+        std::env::set_var("BACKPACK_KEYRING", &p);
+        p
+    }
 
     fn type_str(app: &mut App, s: &str) {
         for c in s.chars() {
@@ -234,75 +1198,266 @@ mod tests {
         }
     }
 
-    fn app_at(selected: usize) -> App {
-        App {
-            selected,
-            ..App::default()
-        }
-    }
-
-    #[test]
-    fn navigation_wraps_both_ways() {
-        let mut app = App::default();
-        app.on_key(KeyCode::Up);
-        assert_eq!(app.selected, TOOLS.len() - 1);
-        app.on_key(KeyCode::Down);
-        assert_eq!(app.selected, 0);
-    }
-
-    #[test]
-    fn number_keys_jump() {
-        let mut app = App::default();
-        app.on_key(KeyCode::Char('3'));
-        assert_eq!(app.selected, 2);
-        // Out-of-range digit is ignored.
-        app.on_key(KeyCode::Char('9'));
-        assert_eq!(app.selected, 2);
-    }
-
-    #[test]
-    fn enter_on_interactive_tool_hands_over() {
-        let mut app = app_at(0); // keyring-tui
-        assert!(TOOLS[0].interactive);
-        assert_eq!(
-            app.on_key(KeyCode::Enter),
-            Action::RunInteractive { bin: "keyring-tui" }
-        );
-        assert_eq!(app.mode, Mode::Menu);
-    }
-
-    #[test]
-    fn enter_on_cli_tool_opens_args_then_runs() {
-        let mut app = app_at(1); // veil
-        assert_eq!(app.on_key(KeyCode::Enter), Action::None);
-        assert_eq!(app.mode, Mode::Args);
-        type_str(&mut app, "enc secret.pdf");
-        let action = app.on_key(KeyCode::Enter);
-        assert_eq!(
-            action,
-            Action::RunCommand {
-                bin: "veil",
-                args: "enc secret.pdf".to_string()
-            }
-        );
-        assert_eq!(app.mode, Mode::Menu);
-        assert!(app.args.is_empty());
-    }
-
-    #[test]
-    fn esc_cancels_args() {
-        let mut app = app_at(2); // scrub
+    fn unlocked_app() -> App {
+        let mut app = App::new();
+        type_str(&mut app, "pw");
         app.on_key(KeyCode::Enter);
-        type_str(&mut app, "-n x.jpg");
-        assert_eq!(app.on_key(KeyCode::Esc), Action::None);
-        assert_eq!(app.mode, Mode::Menu);
-        assert!(app.args.is_empty());
+        if matches!(app.gate, Gate::Locked { .. }) {
+            // creating: confirm field
+            type_str(&mut app, "pw");
+            app.on_key(KeyCode::Enter);
+        }
+        assert!(matches!(app.gate, Gate::Open(_)), "gate should open");
+        app
     }
 
     #[test]
-    fn quit_and_shell() {
-        let mut app = App::default();
-        assert_eq!(app.on_key(KeyCode::Char('!')), Action::Shell);
-        assert_eq!(app.on_key(KeyCode::Char('q')), Action::Quit);
+    fn unlock_flow_creates_and_reopens() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        {
+            let mut app = unlocked_app();
+            app.on_key(KeyCode::Enter); // IDENTITIES
+            app.on_key(KeyCode::Char('g'));
+            type_str(&mut app, "alice");
+            app.on_key(KeyCode::Enter);
+        }
+        assert!(path.exists());
+
+        let mut app = App::new();
+        type_str(&mut app, "wrong");
+        app.on_key(KeyCode::Enter);
+        match &app.gate {
+            Gate::Locked { form, .. } => assert!(form.error.is_some()),
+            _ => panic!("wrong passphrase must not open the gate"),
+        }
+        if let Gate::Locked { form, .. } = &mut app.gate {
+            form.fields[0].value.clear();
+        }
+        type_str(&mut app, "pw");
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.gate, Gate::Open(_)));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn mismatched_create_passphrases_rejected() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        let mut app = App::new();
+        type_str(&mut app, "one");
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "two");
+        app.on_key(KeyCode::Enter);
+        match &app.gate {
+            Gate::Locked { form, .. } => assert!(form.error.is_some()),
+            _ => panic!("mismatch must not open"),
+        }
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn identities_generate_and_npub_whoami() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "carol");
+        app.on_key(KeyCode::Enter);
+
+        let session = app.session().unwrap();
+        assert_eq!(session.identities().len(), 1);
+        let lines = nostr_whoami(session, "carol").unwrap();
+        assert!(lines[0].starts_with("npub1"));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn nostr_post_requires_confirmation() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "dave");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc); // home
+
+        app.on_key(KeyCode::Char('2')); // NOSTR entry
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Char('j')); // POST
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // identity prefilled -> text
+        type_str(&mut app, "hello");
+        app.on_key(KeyCode::Enter); // submit -> confirm
+        assert!(matches!(
+            &app.screen,
+            Screen::Nostr(NostrMode::ConfirmPost { .. })
+        ));
+        assert!(app.pending.is_none(), "must not publish before y");
+        app.on_key(KeyCode::Char('n'));
+        assert!(app.pending.is_none());
+        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Menu(_))));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn veil_roundtrip_via_screens() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("veil-scr-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("msg.txt");
+        std::fs::write(&input, b"deck data").unwrap();
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('3')); // VEIL entry
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // enc-pass form
+        type_str(&mut app, &input.display().to_string());
+        app.on_key(KeyCode::Enter); // output default
+        app.on_key(KeyCode::Enter); // -> passphrase
+        type_str(&mut app, "sk");
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "sk");
+        app.on_key(KeyCode::Enter); // submit
+        let op = app.pending.take().expect("encrypt queued");
+        app.execute(op);
+        assert!(matches!(&app.screen, Screen::Veil(VeilMode::Results { .. })));
+        let enc = dir.join("msg.txt.veil");
+        assert!(enc.exists());
+
+        app.on_key(KeyCode::Enter); // results -> menu
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j')); // dec-pass
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, &enc.display().to_string());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, &dir.join("msg.out").display().to_string());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "sk");
+        app.on_key(KeyCode::Enter);
+        let op = app.pending.take().expect("decrypt queued");
+        app.execute(op);
+        assert_eq!(std::fs::read(dir.join("msg.out")).unwrap(), b"deck data");
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn split_deal_and_combine_via_screens() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("split-scr-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("seed.txt");
+        std::fs::write(&secret, b"correct horse").unwrap();
+        let out = dir.join("shares");
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('5')); // SPLIT entry
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // DEAL form
+        type_str(&mut app, &secret.display().to_string());
+        app.on_key(KeyCode::Enter); // -> k (3)
+        app.on_key(KeyCode::Enter); // -> n (5)
+        app.on_key(KeyCode::Enter); // -> output dir
+        if let Screen::Split(SplitMode::Deal(form)) = &mut app.screen {
+            form.fields[3].value = out.display().to_string();
+        }
+        app.on_key(KeyCode::Enter); // submit
+        assert!(matches!(
+            &app.screen,
+            Screen::Split(SplitMode::Results { .. })
+        ));
+        assert!(out.join("share-1.txt").exists());
+
+        app.on_key(KeyCode::Enter); // -> menu
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter); // COMBINE
+        let files = format!(
+            "{} {} {}",
+            out.join("share-1.txt").display(),
+            out.join("share-3.txt").display(),
+            out.join("share-5.txt").display()
+        );
+        type_str(&mut app, &files);
+        app.on_key(KeyCode::Enter); // optional output
+        app.on_key(KeyCode::Enter); // submit
+        match &app.screen {
+            Screen::Split(SplitMode::Results { lines, .. }) => {
+                assert!(lines.iter().any(|l| l.contains("correct horse")));
+            }
+            _ => panic!("expected results"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn sign_and_verify_via_screens() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("sign-scr-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let msg = dir.join("m.txt");
+        std::fs::write(&msg, b"payload").unwrap();
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "erin");
+        app.on_key(KeyCode::Enter);
+        let pub_line = app.session().unwrap().identities()[0].to_line();
+        let pub_path = dir.join("erin.pub");
+        std::fs::write(&pub_path, format!("{pub_line}\n")).unwrap();
+        app.on_key(KeyCode::Esc);
+
+        app.on_key(KeyCode::Char('6')); // SIGN/VERIFY entry
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // SIGN form
+        app.on_key(KeyCode::Enter); // identity prefilled -> message file
+        type_str(&mut app, &msg.display().to_string());
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(&app.screen, Screen::Sign(SignMode::Results { .. })));
+        let sig = dir.join("m.txt.sig");
+        assert!(sig.exists());
+
+        app.on_key(KeyCode::Enter); // -> menu
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter); // VERIFY
+        type_str(&mut app, &pub_path.display().to_string());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, &msg.display().to_string());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, &sig.display().to_string());
+        app.on_key(KeyCode::Enter);
+        match &app.screen {
+            Screen::Sign(SignMode::Results { lines, .. }) => {
+                assert!(lines[0].starts_with("OK:"), "{lines:?}");
+            }
+            _ => panic!("expected results"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn home_navigation_shell_and_quit() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('4'));
+        assert!(matches!(app.screen, Screen::Home { selected: 3 }));
+        app.on_key(KeyCode::Char('!'));
+        assert!(app.shell_requested);
+        app.on_key(KeyCode::Char('q'));
+        assert!(app.should_quit);
+        std::fs::remove_file(&store).ok();
     }
 }

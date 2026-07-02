@@ -46,7 +46,9 @@ message, and signature, so it requires no passphrase.
 
 ## Terminal UI
 
-`keyring-tui` is an interactive front-end over the same keystore:
+The `backpack` launcher includes a full IDENTITIES screen (with in-TUI unlock);
+`keyring-tui` remains as a standalone single-tool front-end over the same
+keystore:
 
 ```sh
 keyring-tui        # unlock, then browse identities
