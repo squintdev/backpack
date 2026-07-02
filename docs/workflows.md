@@ -91,6 +91,19 @@ veil dec documents.veil | tar x                    # restore
 
 For scripts, set `VEIL_PASSPHRASE`.
 
+## 7. Publish where no one can unpublish you
+
+```sh
+keyring gen --name voice               # identity (includes a Nostr key)
+nostr whoami --identity voice          # share this npub — it IS your handle
+nostr post --identity voice "they can block a server, not a signature"
+nostr fetch --author <your npub>       # anyone, anywhere, any relay
+```
+
+The note is signed by your key and mirrored across relays; readers verify the
+signature, not the server. Remember: notes are public and effectively
+permanent.
+
 ---
 
 ## How the pieces relate
@@ -101,9 +114,11 @@ For scripts, set `VEIL_PASSPHRASE`.
   consumes; `veil dec --identity` reads the private key back out of the keystore.
 - **`keyring` uses `veil`'s crypto for itself.** The keystore file is a `veil`
   (`bp-core`) ciphertext.
+- **`keyring` → `nostr`.** Each identity carries a secp256k1 key; `nostr` signs
+  and publishes with it.
 - **`scrub` and `split`** are self-contained but slot into pipelines: scrub
   before you encrypt/publish; split around any secret, including a `veil` or
   `keyring` passphrase.
 
 See each tool's page for details: [bp-core](bp-core.md) · [veil](veil.md) ·
-[scrub](scrub.md) · [split](split.md) · [keyring](keyring.md).
+[scrub](scrub.md) · [split](split.md) · [keyring](keyring.md) · [nostr](nostr.md).

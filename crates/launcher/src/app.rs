@@ -74,6 +74,21 @@ pub const TOOLS: &[Tool] = &[
         interactive: false,
     },
     Tool {
+        bin: "nostr",
+        name: "NOSTR",
+        tagline: "decentralized notes",
+        about: &[
+            "Publish and read Nostr notes with a keyring identity.",
+            "Signed with your key, spread across relays no one owns.",
+        ],
+        examples: &[
+            "whoami --identity alice",
+            "post --identity alice \"hello world\"",
+            "fetch --author npub1... --limit 5",
+        ],
+        interactive: false,
+    },
+    Tool {
         bin: "keyring",
         name: "SIGN/VERIFY",
         tagline: "signatures",

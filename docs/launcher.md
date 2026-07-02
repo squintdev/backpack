@@ -13,7 +13,7 @@ backpack
 | Key | Action |
 |-----|--------|
 | `↑↓` / `jk` | Move selection |
-| `1`–`5` | Jump straight to a tool |
+| `1`–`6` | Jump straight to a tool |
 | `Enter` | Launch the selected tool |
 | `!` | Drop to a shell (`$SHELL`, exit to return) |
 | `q` / Esc | Quit |
@@ -24,7 +24,7 @@ Two kinds of tools:
 
 - **Interactive (KEYRING)** — the tty is handed over to `keyring-tui` directly;
   when it exits, the menu resumes.
-- **CLI (VEIL / SCRUB / SPLIT / SIGN-VERIFY)** — `Enter` opens an argument
+- **CLI (VEIL / SCRUB / SPLIT / NOSTR / SIGN-VERIFY)** — `Enter` opens an argument
   prompt in the detail pane (with examples above it). The command runs in the
   normal terminal in cooked mode, so the tool's own prompts (passphrases) work.
   Any key returns to the menu; the last command and its exit status stay visible

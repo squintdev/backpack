@@ -67,6 +67,10 @@ enum Cmd {
     Rm {
         name: String,
     },
+    /// Add a Nostr key to an identity created before Nostr support.
+    NostrInit {
+        name: String,
+    },
     /// Sign a file (or stdin) with an identity's signing key.
     Sign {
         #[arg(short, long)]
@@ -96,6 +100,7 @@ fn run() -> Result<()> {
         Cmd::List => cmd_list(&cli),
         Cmd::Export { name } => cmd_export(&cli, name),
         Cmd::Rm { name } => cmd_rm(&cli, name),
+        Cmd::NostrInit { name } => cmd_nostr_init(&cli, name),
         Cmd::Sign { key, input } => cmd_sign(&cli, key, input.as_ref()),
         Cmd::Verify {
             pubfile,
@@ -156,6 +161,19 @@ fn cmd_rm(cli: &Cli, name: &str) -> Result<()> {
     }
     store.save(pass.as_bytes())?;
     println!("removed {name}");
+    Ok(())
+}
+
+fn cmd_nostr_init(cli: &Cli, name: &str) -> Result<()> {
+    let path = store_path(cli)?;
+    let pass = passphrase(false)?;
+    let mut store = KeyStore::open(&path, pass.as_bytes())?;
+    if store.nostr_init(name)? {
+        store.save(pass.as_bytes())?;
+        println!("added Nostr key to {name}");
+    } else {
+        println!("{name} already has a Nostr key");
+    }
     Ok(())
 }
 

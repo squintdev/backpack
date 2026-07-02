@@ -7,6 +7,7 @@ members = [
     "crates/split",
     "crates/keyring",
     "crates/launcher",
+    "crates/bp-nostr",
 ]
 
 [workspace.package]
@@ -46,3 +47,7 @@ serde_json = "1"
 directories = "5"
 hkdf = "0.12"
 ratatui = "0.29"
+k256 = { version = "0.13", features = ["schnorr"] }
+tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+bech32 = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

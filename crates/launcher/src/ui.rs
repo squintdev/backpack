@@ -189,7 +189,7 @@ fn render_keys(f: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = match app.mode {
         Mode::Menu => &[
             ("↑↓/jk", "select"),
-            ("1-5", "jump"),
+            ("1-6", "jump"),
             ("enter", "launch"),
             ("!", "shell"),
             ("q", "quit"),
