@@ -25,7 +25,8 @@ cipherpunk/
     ├── veil/             file encryptor CLI
     ├── scrub/            metadata stripper CLI (lib + bin)
     ├── split/            Shamir secret sharing CLI (lib + bin)
-    └── keyring/          Ed25519/X25519 identity manager (lib + bin)
+    ├── keyring/          Ed25519/X25519 identity manager (lib + bin + TUI)
+    └── launcher/         `cipherpunk` boot menu TUI (cyberdeck entry point)
 ```
 
 ## Build
@@ -147,6 +148,14 @@ CPSIG1 <ed25519 signature hex>
 
 An interactive terminal UI over the same store is available as `keyring-tui`
 (browse, generate, export, delete). Run `keyring --help` for all CLI options.
+
+### `cipherpunk` — launcher
+
+The boot menu for the suite: a full-screen TUI that lists every tool, launches
+the selected one (arg prompt for CLI tools, direct handoff for TUIs), and
+resumes when it exits. Designed as the auto-start entry point for a
+terminal-only cyberdeck — basic ANSI colors only, renders on the bare Linux
+console. See [docs/launcher.md](docs/launcher.md) for the boot-at-login recipe.
 
 ## Cryptography
 

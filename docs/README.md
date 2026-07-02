@@ -12,6 +12,7 @@ crypto core (`cph-core`).
 | [`scrub`](scrub.md) | CLI | Strip identifying metadata (EXIF/GPS, XMP, PDF Info) before sharing |
 | [`split`](split.md) | CLI | Shamir secret sharing: split a secret into `k`-of-`n` shares |
 | [`keyring`](keyring.md) | CLI + TUI + lib | Manage Ed25519/X25519 identities in an encrypted store |
+| [`cipherpunk`](launcher.md) | TUI | Boot menu that launches the whole suite (cyberdeck entry point) |
 
 ## How they fit together
 
