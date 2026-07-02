@@ -143,9 +143,10 @@ CPSIG1 <ed25519 signature hex>
   prompts (scripts/CI).
 - `verify` is stateless — it only needs the public line, message, and signature.
 - The X25519 key is published in `export` to enable public-key file encryption
-  (`veil` recipient mode, planned) without regenerating identities.
+  (`veil` recipient mode) without regenerating identities.
 
-Run `keyring --help` for all options.
+An interactive terminal UI over the same store is available as `keyring-tui`
+(browse, generate, export, delete). Run `keyring --help` for all CLI options.
 
 ## Cryptography
 

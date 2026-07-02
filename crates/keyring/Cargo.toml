@@ -10,6 +10,10 @@ description = "Keypair manager CLI for the cipherpunk suite"
 name = "keyring"
 path = "src/main.rs"
 
+[[bin]]
+name = "keyring-tui"
+path = "src/tui/main.rs"
+
 [dependencies]
 cph-core = { workspace = true }
 clap = { workspace = true }
@@ -25,3 +29,4 @@ zeroize = { workspace = true }
 rand_core = { workspace = true }
 rpassword = { workspace = true }
 directories = { workspace = true }
+ratatui = { workspace = true }
