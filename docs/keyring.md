@@ -1,7 +1,8 @@
 # keyring
 
 Manage signing/encryption identities. Each identity holds an **Ed25519** signing
-keypair and an **X25519** key-agreement keypair. Private keys live in a keystore
+keypair, an **X25519** key-agreement keypair, and a **secp256k1** key for
+[Nostr](nostr.md) (older identities add one with `keyring nostr-init NAME`). Private keys live in a keystore
 that is encrypted at rest under a passphrase.
 
 `keyring` is a library (used by [`veil`](veil.md)), a CLI, and a terminal UI

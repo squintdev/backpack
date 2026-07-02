@@ -25,7 +25,8 @@ backpack/
     ├── veil/             file encryptor CLI
     ├── scrub/            metadata stripper CLI (lib + bin)
     ├── split/            Shamir secret sharing CLI (lib + bin)
-    ├── keyring/          Ed25519/X25519 identity manager (lib + bin + TUI)
+    ├── keyring/          Ed25519/X25519/secp256k1 identity manager (lib + bin + TUI)
+    ├── bp-nostr/         `nostr` minimal Nostr client (NIP-01)
     └── launcher/         `backpack` boot menu TUI (cyberdeck entry point)
 ```
 
@@ -151,6 +152,22 @@ BPSIG1 <ed25519 signature hex>
 
 An interactive terminal UI over the same store is available as `keyring-tui`
 (browse, generate, export, delete). Run `keyring --help` for all CLI options.
+
+### `nostr` — Nostr client
+
+Publish and read notes on Nostr — decentralized, censorship-resistant
+publishing — signed with a keyring identity's secp256k1 key (a third key each
+identity carries; older identities upgrade with `keyring nostr-init NAME`).
+
+```sh
+nostr whoami --identity alice          # your npub
+nostr post --identity alice "hello"    # publish to relays
+nostr fetch --author npub1... --limit 5
+```
+
+Every fetched event is signature-verified before display. Relays come from
+`-r`, `$BACKPACK_NOSTR_RELAYS`, or built-in defaults. See
+[docs/nostr.md](docs/nostr.md).
 
 ### `backpack` — launcher
 

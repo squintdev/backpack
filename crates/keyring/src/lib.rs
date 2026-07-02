@@ -45,12 +45,15 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// A full identity: a name plus Ed25519 (signing) and X25519 (agreement) secret
-/// keys. Secret material is zeroized on drop.
+/// A full identity: a name plus Ed25519 (signing), X25519 (agreement), and
+/// secp256k1 (Nostr, BIP340 Schnorr) secret keys. Nostr uses a different curve
+/// than the other two, so it is a distinct key, optional on identities created
+/// before Nostr support. Secret material is zeroized on drop.
 pub struct KeyPair {
     name: String,
     ed_sk: Zeroizing<[u8; 32]>,
     x_sk: Zeroizing<[u8; 32]>,
+    nostr_sk: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl KeyPair {
@@ -65,6 +68,7 @@ impl KeyPair {
             name: name.to_string(),
             ed_sk: ed,
             x_sk: x,
+            nostr_sk: Some(gen_nostr_key()),
         })
     }
 
@@ -104,6 +108,19 @@ impl KeyPair {
     pub fn x_secret(&self) -> Zeroizing<[u8; 32]> {
         Zeroizing::new(*self.x_sk)
     }
+
+    /// The raw secp256k1 secret key for Nostr (BIP340), if this identity has
+    /// one. Identities created before Nostr support return `None` until
+    /// upgraded with [`KeyStore::nostr_init`]. Zeroized on drop.
+    pub fn nostr_secret(&self) -> Option<Zeroizing<[u8; 32]>> {
+        self.nostr_sk.as_ref().map(|k| Zeroizing::new(**k))
+    }
+}
+
+/// Generate a valid secp256k1 secret key.
+fn gen_nostr_key() -> Zeroizing<[u8; 32]> {
+    let sk = k256::schnorr::SigningKey::random(&mut OsRng);
+    Zeroizing::new(sk.to_bytes().into())
 }
 
 /// The shareable public half of an identity.
@@ -194,6 +211,9 @@ struct StoredEntry {
     name: String,
     ed25519_sk: String,
     x25519_sk: String,
+    /// Absent on stores written before Nostr support; loads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nostr_sk: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -231,10 +251,15 @@ impl KeyStore {
         }
         let mut entries = Vec::with_capacity(file.entries.len());
         for e in file.entries {
+            let nostr_sk = match &e.nostr_sk {
+                Some(hexstr) => Some(Zeroizing::new(decode_key(hexstr)?)),
+                None => None,
+            };
             entries.push(KeyPair {
                 name: e.name,
                 ed_sk: Zeroizing::new(decode_key(&e.ed25519_sk)?),
                 x_sk: Zeroizing::new(decode_key(&e.x25519_sk)?),
+                nostr_sk,
             });
         }
         Ok(KeyStore {
@@ -254,6 +279,7 @@ impl KeyStore {
                     name: k.name.clone(),
                     ed25519_sk: hex::encode(*k.ed_sk),
                     x25519_sk: hex::encode(*k.x_sk),
+                    nostr_sk: k.nostr_sk.as_ref().map(|s| hex::encode(**s)),
                 })
                 .collect(),
         };
@@ -282,6 +308,21 @@ impl KeyStore {
 
     pub fn get(&self, name: &str) -> Option<&KeyPair> {
         self.entries.iter().find(|k| k.name == name)
+    }
+
+    /// Give an existing identity a Nostr key if it lacks one (identities
+    /// created before Nostr support). Returns whether a key was added.
+    pub fn nostr_init(&mut self, name: &str) -> Result<bool> {
+        let kp = self
+            .entries
+            .iter_mut()
+            .find(|k| k.name == name)
+            .ok_or_else(|| Error::NotFound(name.to_string()))?;
+        if kp.nostr_sk.is_some() {
+            return Ok(false);
+        }
+        kp.nostr_sk = Some(gen_nostr_key());
+        Ok(true)
     }
 
     /// Remove an identity by name, returning whether it existed.
@@ -400,6 +441,45 @@ mod tests {
         let sig = alice.sign(b"msg");
         assert!(alice.public().verify(b"msg", &sig));
 
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn nostr_key_persists_and_old_stores_upgrade() {
+        let path = temp_path();
+        let pass = b"pw";
+        {
+            let mut store = KeyStore::open(&path, pass).unwrap();
+            store.generate("alice").unwrap();
+            assert!(store.get("alice").unwrap().nostr_secret().is_some());
+            store.save(pass).unwrap();
+        }
+        // Key is stable across reload.
+        let reopened = KeyStore::open(&path, pass).unwrap();
+        assert!(reopened.get("alice").unwrap().nostr_secret().is_some());
+
+        // A pre-Nostr entry (no nostr_sk field in the JSON) loads as None and
+        // nostr_init adds a key exactly once.
+        let legacy = StoredFile {
+            version: STORE_VERSION,
+            entries: vec![StoredEntry {
+                name: "old".to_string(),
+                ed25519_sk: hex::encode([1u8; 32]),
+                x25519_sk: hex::encode([2u8; 32]),
+                nostr_sk: None,
+            }],
+        };
+        let json = serde_json::to_vec(&legacy).unwrap();
+        assert!(!String::from_utf8_lossy(&json).contains("nostr_sk"));
+        let mut sealed = Vec::new();
+        bp_core::seal(&mut &json[..], &mut sealed, pass).unwrap();
+        std::fs::write(&path, &sealed).unwrap();
+
+        let mut store = KeyStore::open(&path, pass).unwrap();
+        assert!(store.get("old").unwrap().nostr_secret().is_none());
+        assert!(store.nostr_init("old").unwrap());
+        assert!(!store.nostr_init("old").unwrap()); // idempotent
+        assert!(store.get("old").unwrap().nostr_secret().is_some());
         std::fs::remove_file(&path).ok();
     }
 

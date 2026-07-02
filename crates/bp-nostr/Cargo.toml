@@ -1,33 +1,28 @@
 [package]
-name = "keyring"
+name = "bp-nostr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Keypair manager CLI for the backpack suite"
+description = "Minimal Nostr client CLI for the backpack suite"
 
 [[bin]]
-name = "keyring"
+name = "nostr"
 path = "src/main.rs"
 
-[[bin]]
-name = "keyring-tui"
-path = "src/tui/main.rs"
-
 [dependencies]
-bp-core = { workspace = true }
+keyring = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
-ed25519-dalek = { workspace = true }
-k256 = { workspace = true }
-x25519-dalek = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
-zeroize = { workspace = true }
+k256 = { workspace = true }
+bech32 = { workspace = true }
+tungstenite = { workspace = true }
+rustls = { workspace = true }
 rand_core = { workspace = true }
 rpassword = { workspace = true }
-directories = { workspace = true }
-ratatui = { workspace = true }
+zeroize = { workspace = true }
