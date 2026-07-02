@@ -1,4 +1,4 @@
-//! `veil` — encrypt and decrypt files with a passphrase or a public key.
+//! `veil` CLI — thin wrapper over the veil library.
 //!
 //! ```text
 //! veil enc secret.pdf                     # passphrase -> secret.pdf.veil
@@ -14,8 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 
-/// Extension appended to encrypted files.
-const EXT: &str = "veil";
+use veil::{DecKey, EncKey, EXT};
 
 #[derive(Parser)]
 #[command(
@@ -73,6 +72,12 @@ struct Io {
     keyring: Option<PathBuf>,
 }
 
+/// Environment variable used to supply the passphrase non-interactively
+/// (scripting / CI). When set, prompting and confirmation are skipped.
+const PASS_ENV: &str = "VEIL_PASSPHRASE";
+/// Keystore passphrase environment variable (shared with `keyring`).
+const KEYSTORE_PASS_ENV: &str = "BACKPACK_PASSPHRASE";
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("veil: {e:#}");
@@ -90,32 +95,19 @@ fn run() -> Result<()> {
 
 fn encrypt(io: Io) -> Result<()> {
     let out = default_enc_output(&io);
-
-    // Public-key mode: encrypt to a recipient's X25519 key, no passphrase.
     if let Some(rp) = &io.recipient {
         let txt = fs::read_to_string(rp).with_context(|| format!("reading {}", rp.display()))?;
-        let recipient = keyring::PublicIdentity::parse(&txt)?.x;
-        return with_streams(&io.input, &out, |r, w| {
-            bp_core::seal_to_recipient(r, w, &recipient).map_err(Into::into)
-        });
+        let key = EncKey::Recipient(keyring::PublicIdentity::parse(&txt)?.x);
+        return with_streams(&io.input, &out, |r, w| veil::encrypt_stream(r, w, &key));
     }
-
     let pass = prompt_new_passphrase()?;
-    with_streams(&io.input, &out, |r, w| {
-        bp_core::seal(r, w, pass.as_bytes()).map_err(Into::into)
-    })
+    let key = EncKey::Passphrase(pass.as_bytes());
+    with_streams(&io.input, &out, |r, w| veil::encrypt_stream(r, w, &key))
 }
-
-/// Environment variable used to supply the passphrase non-interactively
-/// (scripting / CI). When set, prompting and confirmation are skipped.
-const PASS_ENV: &str = "VEIL_PASSPHRASE";
-/// Keystore passphrase environment variable (shared with `keyring`).
-const KEYSTORE_PASS_ENV: &str = "BACKPACK_PASSPHRASE";
 
 fn decrypt(io: Io) -> Result<()> {
     let out = default_dec_output(&io)?;
 
-    // Public-key mode: decrypt with a stored identity's X25519 secret.
     if let Some(name) = &io.identity {
         let path = io
             .keyring
@@ -129,7 +121,7 @@ fn decrypt(io: Io) -> Result<()> {
             .ok_or_else(|| anyhow!("no identity named {name:?} in keystore"))?
             .x_secret();
         return with_streams(&io.input, &out, |r, w| {
-            bp_core::open_as_recipient(r, w, &sk).map_err(Into::into)
+            veil::decrypt_stream(r, w, &DecKey::IdentitySecret(&sk))
         });
     }
 
@@ -138,11 +130,10 @@ fn decrypt(io: Io) -> Result<()> {
         Err(_) => rpassword::prompt_password("Passphrase: ").context("reading passphrase")?,
     };
     with_streams(&io.input, &out, |r, w| {
-        bp_core::open(r, w, pass.as_bytes()).map_err(Into::into)
+        veil::decrypt_stream(r, w, &DecKey::Passphrase(pass.as_bytes()))
     })
 }
 
-/// Keystore passphrase from `$BACKPACK_PASSPHRASE` or an interactive prompt.
 fn keystore_passphrase() -> Result<String> {
     match std::env::var(KEYSTORE_PASS_ENV) {
         Ok(p) => Ok(p),
@@ -152,8 +143,6 @@ fn keystore_passphrase() -> Result<String> {
     }
 }
 
-/// Obtain a passphrase for encryption: from `VEIL_PASSPHRASE` if set,
-/// otherwise prompt twice and confirm the two entries match.
 fn prompt_new_passphrase() -> Result<String> {
     if let Ok(p) = std::env::var(PASS_ENV) {
         if p.is_empty() {
@@ -185,9 +174,7 @@ fn default_enc_output(io: &Io) -> Option<PathBuf> {
         return non_stdio(o);
     }
     match &io.input {
-        Some(p) if p.as_os_str() != "-" => {
-            Some(PathBuf::from(format!("{}.{EXT}", p.display())))
-        }
+        Some(p) if p.as_os_str() != "-" => Some(veil::enc_output_for(p)),
         _ => None,
     }
 }
@@ -199,7 +186,7 @@ fn default_dec_output(io: &Io) -> Result<Option<PathBuf>> {
     }
     match &io.input {
         Some(p) if p.extension().map(|e| e == EXT).unwrap_or(false) => {
-            Ok(Some(p.with_extension("")))
+            Ok(Some(veil::dec_output_for(p)?))
         }
         Some(p) if p.as_os_str() != "-" => {
             bail!("cannot infer output name for {}; pass -o", p.display())
@@ -216,9 +203,8 @@ fn non_stdio(p: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Open input/output streams and run `op`. File output is written to a
-/// temporary sibling and atomically renamed on success, so a failure or wrong
-/// passphrase never leaves a truncated destination file.
+/// Stream plumbing for the CLI's stdin/stdout modes; file output is atomic
+/// (temp sibling + rename) like the library's path helpers.
 fn with_streams<F>(input: &Option<PathBuf>, output: &Option<PathBuf>, op: F) -> Result<()>
 where
     F: FnOnce(&mut dyn Read, &mut dyn Write) -> Result<()>,
@@ -239,9 +225,13 @@ where
             Ok(())
         }
         Some(path) => {
-            let tmp = tmp_path(path);
-            let file = File::create(&tmp)
-                .with_context(|| format!("creating {}", tmp.display()))?;
+            let tmp = {
+                let mut name = path.file_name().unwrap_or_default().to_os_string();
+                name.push(".tmp");
+                path.with_file_name(name)
+            };
+            let file =
+                File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
             let mut w = BufWriter::new(file);
             match op(&mut reader, &mut w).and_then(|_| Ok(w.flush()?)) {
                 Ok(()) => {
@@ -256,10 +246,4 @@ where
             }
         }
     }
-}
-
-fn tmp_path(path: &Path) -> PathBuf {
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(".tmp");
-    path.with_file_name(name)
 }

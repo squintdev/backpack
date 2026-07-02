@@ -13,3 +13,10 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true }
 ratatui = { workspace = true }
+keyring = { workspace = true }
+bp-nostr = { path = "../bp-nostr" }
+veil = { path = "../veil" }
+scrub = { path = "../scrub" }
+split = { path = "../split" }
+hex = { workspace = true }
+zeroize = { workspace = true }

@@ -1,4 +1,4 @@
-//! `nostr` — publish and read Nostr notes with a backpack keyring identity.
+//! `nostr` CLI — thin wrapper over the bp-nostr library.
 //!
 //! ```text
 //! nostr whoami --identity alice          # npub + hex pubkey
@@ -6,31 +6,19 @@
 //! nostr fetch --author npub1…            # latest notes by an author
 //! ```
 
-use std::net::TcpStream;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
-use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, WebSocket};
 use zeroize::Zeroizing;
 
-use bp_nostr::event::{sign_event, verify_event, Event, KIND_TEXT_NOTE};
+use bp_nostr::client::{fetch, publish, resolve_relays};
+use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
 use bp_nostr::nip19::{npub_encode, pubkey_to_hex};
-use bp_nostr::relay::{close_frame, parse, publish_frame, req_frame, Filter, RelayMsg};
+use bp_nostr::relay::Filter;
 
-/// Relays used when none are given.
-const DEFAULT_RELAYS: &[&str] = &[
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.nostr.band",
-];
 /// Keystore passphrase environment variable (shared across the suite).
 const PASS_ENV: &str = "BACKPACK_PASSPHRASE";
-/// Comma-separated relay list override.
-const RELAY_ENV: &str = "BACKPACK_NOSTR_RELAYS";
-/// Per-relay socket read timeout.
-const READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Parser)]
 #[command(
@@ -94,13 +82,13 @@ fn run() -> Result<()> {
     match &cli.cmd {
         Cmd::Whoami { identity } => whoami(identity),
         Cmd::Post { identity, text } => post(identity, text, &relays),
-        Cmd::Fetch { author, limit } => fetch(author, *limit, &relays),
+        Cmd::Fetch { author, limit } => run_fetch(author, *limit, &relays),
     }
 }
 
 fn whoami(identity: &str) -> Result<()> {
     let sk = load_nostr_key(identity)?;
-    let pk_hex = bp_nostr::event::pubkey_hex(&sk)?;
+    let pk_hex = pubkey_hex(&sk)?;
     let pk: [u8; 32] = hex::decode(&pk_hex).unwrap().try_into().unwrap();
     println!("{}", npub_encode(&pk));
     println!("{pk_hex}");
@@ -115,15 +103,18 @@ fn post(identity: &str, text: &str, relays: &[String]) -> Result<()> {
     let ev = sign_event(&sk, now(), KIND_TEXT_NOTE, vec![], text.to_string())?;
     println!("event id {}", ev.id);
 
-    let frame = publish_frame(&ev);
+    let results = publish(relays, &ev);
     let mut accepted = 0;
-    for url in relays {
-        match publish_to(url, &frame, &ev.id) {
+    for (url, result) in &results {
+        match result {
             Ok(msg) => {
                 accepted += 1;
-                println!("  {url}: accepted{}", if msg.is_empty() { String::new() } else { format!(" ({msg})") });
+                println!(
+                    "  {url}: accepted{}",
+                    if msg.is_empty() { String::new() } else { format!(" ({msg})") }
+                );
             }
-            Err(e) => eprintln!("  {url}: {e:#}"),
+            Err(e) => eprintln!("  {url}: {e}"),
         }
     }
     if accepted == 0 {
@@ -132,132 +123,25 @@ fn post(identity: &str, text: &str, relays: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn fetch(author: &str, limit: u32, relays: &[String]) -> Result<()> {
-    let author_hex = pubkey_to_hex(author)?;
+fn run_fetch(author: &str, limit: u32, relays: &[String]) -> Result<()> {
     let filter = Filter {
-        authors: Some(vec![author_hex]),
+        authors: Some(vec![pubkey_to_hex(author)?]),
         kinds: Some(vec![KIND_TEXT_NOTE]),
         limit: Some(limit),
     };
-
-    let mut last_err = anyhow!("no relays configured");
-    for url in relays {
-        match fetch_from(url, &filter) {
-            Ok(mut events) => {
-                events.sort_by_key(|e| std::cmp::Reverse(e.created_at));
-                if events.is_empty() {
-                    println!("(no notes found on {url})");
-                    return Ok(());
-                }
-                for ev in &events {
-                    print_event(ev);
-                }
-                eprintln!("({} notes from {url}, signatures verified)", events.len());
-                return Ok(());
-            }
-            Err(e) => {
-                eprintln!("  {url}: {e:#}");
-                last_err = e;
-            }
-        }
-    }
-    Err(last_err.context("all relays failed"))
-}
-
-// --- relay I/O --------------------------------------------------------------
-
-type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
-
-fn connect(url: &str) -> Result<Socket> {
-    let (socket, _resp) =
-        tungstenite::connect(url).with_context(|| format!("connecting to {url}"))?;
-    // Bound reads so a silent relay cannot hang the CLI.
-    if let MaybeTlsStream::Rustls(s) = socket.get_ref() {
-        s.get_ref().set_read_timeout(Some(READ_TIMEOUT))?;
-    } else if let MaybeTlsStream::Plain(s) = socket.get_ref() {
-        s.set_read_timeout(Some(READ_TIMEOUT))?;
-    }
-    Ok(socket)
-}
-
-/// Publish one event frame and wait for the matching `OK`.
-fn publish_to(url: &str, frame: &str, event_id: &str) -> Result<String> {
-    let mut socket = connect(url)?;
-    socket.send(Message::Text(frame.to_string()))?;
-    loop {
-        match socket.read()? {
-            Message::Text(text) => match parse(&text) {
-                RelayMsg::Ok(id, true, msg) if id == event_id => {
-                    let _ = socket.close(None);
-                    return Ok(msg);
-                }
-                RelayMsg::Ok(id, false, msg) if id == event_id => {
-                    bail!("rejected: {msg}");
-                }
-                RelayMsg::Notice(m) => eprintln!("  {url} notice: {m}"),
-                _ => {}
-            },
-            Message::Ping(_) | Message::Pong(_) => {}
-            Message::Close(_) => bail!("relay closed before acknowledging"),
-            _ => {}
-        }
-    }
-}
-
-/// Run one subscription to EOSE and return the (verified) events.
-fn fetch_from(url: &str, filter: &Filter) -> Result<Vec<Event>> {
-    let mut socket = connect(url)?;
-    let sub = "backpack";
-    socket.send(Message::Text(req_frame(sub, filter)))?;
-
-    let mut events = Vec::new();
-    let mut dropped = 0u32;
-    loop {
-        match socket.read()? {
-            Message::Text(text) => match parse(&text) {
-                RelayMsg::Event(ev) => {
-                    // Never trust relay data: verify id + signature.
-                    if verify_event(&ev).is_ok() {
-                        events.push(*ev);
-                    } else {
-                        dropped += 1;
-                    }
-                }
-                RelayMsg::Eose => break,
-                RelayMsg::Notice(m) => eprintln!("  {url} notice: {m}"),
-                _ => {}
-            },
-            Message::Ping(_) | Message::Pong(_) => {}
-            Message::Close(_) => break,
-            _ => {}
-        }
-    }
-    let _ = socket.send(Message::Text(close_frame(sub)));
-    let _ = socket.close(None);
+    let (url, events, dropped) = fetch(relays, &filter).map_err(|e| anyhow!(e))?;
     if dropped > 0 {
         eprintln!("  {url}: dropped {dropped} event(s) with bad signatures");
     }
-    Ok(events)
-}
-
-// --- helpers -----------------------------------------------------------------
-
-fn resolve_relays(cli_relays: &[String]) -> Vec<String> {
-    if !cli_relays.is_empty() {
-        return cli_relays.to_vec();
+    if events.is_empty() {
+        println!("(no notes found on {url})");
+        return Ok(());
     }
-    if let Ok(env) = std::env::var(RELAY_ENV) {
-        let list: Vec<String> = env
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect();
-        if !list.is_empty() {
-            return list;
-        }
+    for ev in &events {
+        print_event(ev);
     }
-    DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
+    eprintln!("({} notes from {url}, signatures verified)", events.len());
+    Ok(())
 }
 
 /// Load the Nostr secret key for a keyring identity.
@@ -287,9 +171,8 @@ fn now() -> u64 {
 }
 
 fn print_event(ev: &Event) {
-    let when = ev.created_at;
     let short = &ev.pubkey[..12.min(ev.pubkey.len())];
-    println!("── {short}… @ {when}");
+    println!("── {short}… @ {}", ev.created_at);
     for line in ev.content.lines() {
         println!("   {line}");
     }

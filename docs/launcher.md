@@ -1,52 +1,52 @@
 # backpack (launcher)
 
-The boot menu for the suite — the binary a cyberdeck starts at login. A
-full-screen amber-phosphor menu that launches the suite's tools and takes the
-terminal back when they exit.
+The suite as **one TUI client** — the binary a cyberdeck boots into. Every tool
+is a native screen inside the launcher: nothing shells out, nothing drops you
+back to a bash prompt, and the keystore passphrase is entered in a masked
+in-TUI prompt.
 
 ```sh
 backpack
 ```
 
-## Keys
+## Flow
 
-| Key | Action |
-|-----|--------|
-| `↑↓` / `jk` | Move selection |
-| `1`–`6` | Jump straight to a tool |
-| `Enter` | Launch the selected tool |
-| `!` | Drop to a shell (`$SHELL`, exit to return) |
-| `q` / Esc | Quit |
+1. **Unlock gate.** First screen is a masked passphrase prompt. On a first run
+   it asks twice and creates the encrypted keystore; afterwards it unlocks the
+   existing one. The store stays unlocked for the whole session, so no screen
+   ever prompts again.
+2. **Home.** The tool menu. `↑↓`/`jk` or `1`–`6` select, `Enter` opens,
+   `!` drops to a real shell (exit to return), `q` quits.
+3. **Tool screens.** Each tool is native — forms with `Tab`/`Enter` field
+   navigation, `Esc` backs out one level. Slow operations (relay calls,
+   Argon2) show a `WORKING…` overlay and return their results in-screen.
 
-## How launching works
+## Screens
 
-Two kinds of tools:
+| Screen | What it does |
+|--------|--------------|
+| IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `n` adds a Nostr key to a pre-Nostr identity. |
+| NOSTR | WHOAMI (npub), POST (with an explicit *public + permanent* y/n confirm), FETCH (signature-verified notes by author). |
+| VEIL | Encrypt/decrypt with a passphrase or to/with an identity. Output names auto-derive; writes are atomic. |
+| SCRUB | Scan a file, show exactly what metadata would be removed, then write a `.clean.` copy on confirm. |
+| SPLIT | DEAL a secret file into k-of-n share files; COMBINE shares back (display or write to file). |
+| SIGN/VERIFY | Sign a file with an identity (`<file>.sig`); verify anyone's signature from their `.pub` line. |
 
-- **Interactive (KEYRING)** — the tty is handed over to `keyring-tui` directly;
-  when it exits, the menu resumes.
-- **CLI (VEIL / SCRUB / SPLIT / NOSTR / SIGN-VERIFY)** — `Enter` opens an argument
-  prompt in the detail pane (with examples above it). The command runs in the
-  normal terminal in cooked mode, so the tool's own prompts (passphrases) work.
-  Any key returns to the menu; the last command and its exit status stay visible
-  in the detail pane.
-
-Commands run through `sh -c`, so quoting and globs behave like a shell.
-
-Suite binaries are resolved as **siblings of the launcher executable** first
-(the deploy layout: all binaries in one directory), falling back to `$PATH`.
+The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`) remain for
+scripting and pipes — the launcher and the CLIs share the same libraries, so
+behavior is identical.
 
 ## Console-friendly by design
 
-The UI is monochrome amber phosphor (truecolor #FFB000 family) and runs on the
-Linux framebuffer console (no X/Wayland) as well as desktop emulators — the
-bare VT approximates the amber onto its 16-color palette (see
-[deploy.md](deploy.md) for retuning it). On screens
-narrower than 80 columns the ASCII banner collapses to a one-line badge. Use a
-console font with box-drawing glyphs (e.g. Terminus) for best results.
+Monochrome amber phosphor (truecolor `#FFB000` family) on the Linux framebuffer
+console (no X/Wayland) or any terminal emulator — the bare VT approximates the
+amber onto its 16-color palette (see [deploy.md](deploy.md) for retuning it).
+Screens narrower than 80 columns collapse the banner to a one-line badge. Use a
+console font with box-drawing glyphs (e.g. Terminus).
 
 ## Boot into it (cyberdeck)
 
-Autologin on tty1 + start from the shell profile. With systemd:
+Autologin on tty1, then `exec` the launcher from the shell profile:
 
 ```ini
 # /etc/systemd/system/getty@tty1.service.d/autologin.conf
@@ -56,17 +56,24 @@ ExecStart=-/sbin/agetty --autologin deck --noclear %I $TERM
 ```
 
 ```sh
-# ~deck/.profile (or .bash_profile)
+# ~deck/.profile
 if [ "$(tty)" = "/dev/tty1" ]; then
-    exec backpack
+    exec /opt/backpack/backpack
 fi
 ```
 
 `exec` replaces the shell, so quitting the launcher logs out and getty restarts
-it — the deck always boots into the menu. (The `!` shell escape still works
-inside the launcher.)
+it — the deck always boots into the client. The `!` shell escape still works
+inside.
+
+## Security notes
+
+- The keystore passphrase is held in memory (zeroized on drop) for the session
+  so mutations can re-seal the store without re-prompting. Lock the deck when
+  you walk away — quitting the launcher drops the key material.
+- Masked fields never echo; the pty carries only `●` glyphs.
 
 ## See also
 
 [keyring](keyring.md) · [veil](veil.md) · [scrub](scrub.md) · [split](split.md) ·
-[workflows](workflows.md)
+[nostr](nostr.md) · [workflows](workflows.md) · [deploy](deploy.md)

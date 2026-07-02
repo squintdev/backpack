@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 description = "File encryptor CLI for the backpack suite"
 
+[lib]
+name = "veil"
+path = "src/lib.rs"
+
 [[bin]]
 name = "veil"
 path = "src/main.rs"

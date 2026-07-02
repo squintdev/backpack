@@ -11,6 +11,7 @@
 //! Identity keys come from the suite's `keyring` (each identity carries a
 //! secp256k1 key alongside its Ed25519/X25519 pair).
 
+pub mod client;
 pub mod event;
 pub mod nip19;
 pub mod relay;

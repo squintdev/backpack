@@ -169,13 +169,15 @@ Every fetched event is signature-verified before display. Relays come from
 `-r`, `$BACKPACK_NOSTR_RELAYS`, or built-in defaults. See
 [docs/nostr.md](docs/nostr.md).
 
-### `backpack` — launcher
+### `backpack` — the TUI client
 
-The boot menu for the suite: a full-screen TUI that lists every tool, launches
-the selected one (arg prompt for CLI tools, direct handoff for TUIs), and
-resumes when it exits. Designed as the auto-start entry point for a
+The suite as one full-screen client: the keystore unlocks via an in-TUI masked
+prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify —
+is a native screen with forms and results panes. No shelling out. `!` drops to
+a real shell when you need one. Designed as the auto-start entry point for a
 terminal-only cyberdeck — amber phosphor monochrome, renders on the bare Linux
-console. See [docs/launcher.md](docs/launcher.md) for the boot-at-login recipe.
+console. See [docs/launcher.md](docs/launcher.md) for keys and the
+boot-at-login recipe.
 
 ## Cryptography
 
