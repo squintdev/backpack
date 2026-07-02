@@ -25,7 +25,7 @@ backpack
 
 | Screen | What it does |
 |--------|--------------|
-| IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `n` adds a Nostr key to a pre-Nostr identity. |
+| IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `c` copies the npub to the clipboard; `n` adds a Nostr key to a pre-Nostr identity. |
 | NOSTR | WHOAMI (npub), POST (with an explicit *public + permanent* y/n confirm), FETCH (signature-verified notes by author). |
 | VEIL | Encrypt/decrypt with a passphrase or to/with an identity. Output names auto-derive; writes are atomic. |
 | SCRUB | Scan a file, show exactly what metadata would be removed, then write a `.clean.` copy on confirm. |
@@ -72,6 +72,14 @@ inside.
   so mutations can re-seal the store without re-prompting. Lock the deck when
   you walk away — quitting the launcher drops the key material.
 - Masked fields never echo; the pty carries only `●` glyphs.
+
+## Clipboard
+
+Mouse-selecting text in a TUI drags in border glyphs and padding, so copyable
+values have a key instead: `c` copies the npub (IDENTITIES) or the result
+value — npub, event id — (NOSTR results) via **OSC 52**, which works in modern
+terminal emulators and over SSH. The bare Linux VT has no clipboard; in tmux
+enable `set -g set-clipboard on`.
 
 ## See also
 

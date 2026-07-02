@@ -6,6 +6,7 @@
 //! `!` still drops to a real shell for everything else.
 
 mod app;
+mod clipboard;
 mod form;
 mod session;
 mod theme;
@@ -70,6 +71,9 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key.code),
             _ => {}
+        }
+        if let Some(text) = app.clipboard.take() {
+            clipboard::copy(&text);
         }
     }
 }
