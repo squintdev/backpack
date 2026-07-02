@@ -4,7 +4,8 @@ Manage signing/encryption identities. Each identity holds an **Ed25519** signing
 keypair and an **X25519** key-agreement keypair. Private keys live in a keystore
 that is encrypted at rest under a passphrase.
 
-`keyring` is both a library (used by [`veil`](veil.md)) and a CLI.
+`keyring` is a library (used by [`veil`](veil.md)), a CLI, and a terminal UI
+(`keyring-tui`).
 
 ## Usage
 
@@ -42,6 +43,29 @@ Operations that touch private keys (`gen`, `list`, `export`, `rm`, `sign`)
 unlock the store. **`verify` is stateless** — it needs only the public line,
 message, and signature, so it requires no passphrase.
 
+## Terminal UI
+
+`keyring-tui` is an interactive front-end over the same keystore:
+
+```sh
+keyring-tui        # unlock, then browse identities
+```
+
+It unlocks the store in the normal terminal (passphrase prompt or
+`$CIPHERPUNK_PASSPHRASE`), then shows a two-pane view: the identity list on the
+left, details (fingerprint + public line) on the right.
+
+| Key | Action |
+|-----|--------|
+| `j` / `k`, ↑ / ↓ | Move selection |
+| `g` | Generate a new identity (type a name, Enter) |
+| `e` | Export the selected identity to `<name>.pub` |
+| `d` | Delete the selected identity (confirm `y`/`n`) |
+| `q` / Esc | Quit |
+
+Mutations are saved to the encrypted store immediately. Signing and verification
+stay in the CLI.
+
 ## Wire formats
 
 Public identities and signatures are single-line, copy-pasteable text:
@@ -71,8 +95,8 @@ SHA-256(ed25519 pubkey), grouped as `xxxx-xxxx-xxxx-xxxx`.
   but a weak passphrase is still weak).
 - Anyone with a public line can encrypt to you and verify your signatures — that
   is the point; publish it freely.
-- Web-of-trust / contact management and a TUI front-end are planned; this pass is
-  the lib + CLI core.
+- Web-of-trust / contact management are planned; this pass is the lib, CLI, and
+  a browse/generate/delete/export TUI.
 - v0.1.
 
 ## See also
