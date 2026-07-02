@@ -65,6 +65,7 @@ pub fn render(f: &mut Frame, app: &App) {
                     &[
                         ("g", "generate"),
                         ("e", "export"),
+                        ("c", "copy npub"),
                         ("n", "nostr key"),
                         ("d", "delete"),
                         ("esc", "back"),
@@ -120,6 +121,7 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
     match mode {
         NostrMode::Menu(_) => &[("↑↓/jk", "select"), ("enter", "open"), ("esc", "back")],
         NostrMode::ConfirmPost { .. } => &[("y", "publish"), ("n", "cancel")],
+        NostrMode::Results { copy: Some(_), .. } => &[("c", "copy"), ("enter/esc", "back")],
         NostrMode::Results { .. } => &[("enter/esc", "back")],
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
@@ -311,7 +313,7 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
                 area,
             );
         }
-        NostrMode::Results { title, lines } => render_lines(f, area, title, lines),
+        NostrMode::Results { title, lines, .. } => render_lines(f, area, title, lines),
     }
 }
 

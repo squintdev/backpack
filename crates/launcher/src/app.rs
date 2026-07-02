@@ -91,7 +91,12 @@ pub enum NostrMode {
     Post(Form),
     ConfirmPost { identity: String, text: String },
     Fetch(Form),
-    Results { title: String, lines: Vec<String> },
+    Results {
+        title: String,
+        lines: Vec<String>,
+        /// Payload staged to the clipboard when the user presses c.
+        copy: Option<String>,
+    },
 }
 
 pub const NOSTR_MENU: &[&str] = &[
@@ -180,6 +185,8 @@ pub struct App {
     pub pending: Option<Pending>,
     pub should_quit: bool,
     pub shell_requested: bool,
+    /// Text staged for the terminal clipboard (emitted as OSC 52 by the loop).
+    pub clipboard: Option<String>,
 }
 
 impl App {
@@ -200,6 +207,7 @@ impl App {
             pending: None,
             should_quit: false,
             shell_requested: false,
+            clipboard: None,
         }
     }
 
@@ -306,6 +314,7 @@ impl App {
 
     fn on_key_identities(&mut self, code: KeyCode) {
         let mut back_home = false;
+        let mut queue_copy: Option<String> = None;
         {
             let Gate::Open(session) = &mut self.gate else {
                 return;
@@ -340,6 +349,13 @@ impl App {
                             Err(e) => format!("nostr-init failed: {e}"),
                         };
                     }
+                    KeyCode::Char('c') => match selected_npub(session, st.selected) {
+                        Ok(npub) => {
+                            queue_copy = Some(npub);
+                            st.status = "npub copied ✓".to_string();
+                        }
+                        Err(e) => st.status = format!("copy failed: {e}"),
+                    },
                     KeyCode::Char('d') if !session.identities().is_empty() => {
                         st.mode = IdMode::ConfirmDelete;
                     }
@@ -386,6 +402,9 @@ impl App {
         if back_home {
             self.screen = Screen::Home { selected: 0 };
         }
+        if queue_copy.is_some() {
+            self.clipboard = queue_copy;
+        }
     }
 
     // ------------------------------------------------------------- nostr
@@ -394,6 +413,7 @@ impl App {
         let first = self.first_identity();
         let mut back_home = false;
         let mut queue: Option<Pending> = None;
+        let mut queue_copy: Option<String> = None;
         {
             let Gate::Open(session) = &self.gate else {
                 return;
@@ -439,9 +459,11 @@ impl App {
                         let name = form.value(0).to_string();
                         match nostr_whoami(session, &name) {
                             Ok(lines) => {
+                                let npub = lines.first().cloned();
                                 *mode = NostrMode::Results {
                                     title: format!("{name}'s nostr key"),
                                     lines,
+                                    copy: npub,
                                 }
                             }
                             Err(e) => form.error = Some(format!("{e}")),
@@ -486,11 +508,20 @@ impl App {
                         }
                     }
                 },
-                NostrMode::Results { .. } => {
-                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                NostrMode::Results { lines, copy, .. } => match code {
+                    KeyCode::Char('c') => {
+                        if let Some(text) = copy.clone() {
+                            queue_copy = Some(text);
+                            if !lines.iter().any(|l| l.contains("copied ✓")) {
+                                lines.push("copied ✓".to_string());
+                            }
+                        }
+                    }
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                         *mode = NostrMode::Menu(0);
                     }
-                }
+                    _ => {}
+                },
             }
         }
         if back_home {
@@ -498,6 +529,9 @@ impl App {
         }
         if queue.is_some() {
             self.pending = queue;
+        }
+        if queue_copy.is_some() {
+            self.clipboard = queue_copy;
         }
     }
 
@@ -751,10 +785,17 @@ impl App {
             Pending::NostrPost { identity, text } => {
                 let result = nostr_post(session, &identity, &text);
                 if let Screen::Nostr(mode) = &mut self.screen {
-                    *mode = NostrMode::Results {
-                        title: "post".into(),
-                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                    let (lines, copy) = match result {
+                        Ok(lines) => {
+                            let id = lines
+                                .first()
+                                .and_then(|l| l.strip_prefix("event id "))
+                                .map(str::to_string);
+                            (lines, id)
+                        }
+                        Err(e) => (vec![format!("failed: {e}")], None),
                     };
+                    *mode = NostrMode::Results { title: "post".into(), lines, copy };
                 }
             }
             Pending::NostrFetch { author, limit } => {
@@ -763,6 +804,7 @@ impl App {
                     *mode = NostrMode::Results {
                         title: "fetch".into(),
                         lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
                     };
                 }
             }
@@ -829,6 +871,16 @@ fn nostr_init_selected(session: &mut Session, selected: usize) -> Result<String>
     } else {
         Ok(format!("{name} already has a Nostr key"))
     }
+}
+
+/// The npub of the identity at `selected`, for clipboard copy.
+fn selected_npub(session: &Session, selected: usize) -> Result<String> {
+    let ids = session.identities();
+    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    Ok(nostr_whoami(session, &id.name)?
+        .into_iter()
+        .next()
+        .expect("whoami returns npub first"))
 }
 
 /// The npub (and hex) for an identity in the session store.
@@ -1444,6 +1496,34 @@ mod tests {
             _ => panic!("expected results"),
         }
         std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn copy_stages_npub_for_clipboard() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "frank");
+        app.on_key(KeyCode::Enter);
+
+        // c on the identity list stages the npub.
+        app.on_key(KeyCode::Char('c'));
+        let staged = app.clipboard.take().expect("clipboard staged");
+        assert!(staged.starts_with("npub1"));
+        assert!(!staged.contains(' '), "payload must be the bare npub");
+        app.on_key(KeyCode::Esc);
+
+        // c on the WHOAMI results stages the same npub.
+        app.on_key(KeyCode::Char('2'));
+        app.on_key(KeyCode::Enter); // NOSTR menu
+        app.on_key(KeyCode::Enter); // WHOAMI form (identity prefilled)
+        app.on_key(KeyCode::Enter); // submit
+        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Results { .. })));
+        app.on_key(KeyCode::Char('c'));
+        assert_eq!(app.clipboard.take().as_deref(), Some(staged.as_str()));
         std::fs::remove_file(&store).ok();
     }
 
