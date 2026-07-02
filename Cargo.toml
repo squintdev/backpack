@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/cph-core", "crates/veil", "crates/scrub", "crates/split", "crates/keyring"]
+members = [
+    "crates/cph-core",
+    "crates/veil",
+    "crates/scrub",
+    "crates/split",
+    "crates/keyring",
+    "crates/launcher",
+]
 
 [workspace.package]
 version = "0.1.0"
