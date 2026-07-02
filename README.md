@@ -1,8 +1,8 @@
-# cipherpunk
+# backpack
 
 A suite of privacy, crypto, and sovereignty tools built in Rust.
 
-Every tool shares one audited crypto core (`cph-core`) so a fix or audit applies
+Every tool shares one audited crypto core (`bp-core`) so a fix or audit applies
 everywhere at once. The core is native-first and WASM-ready, so CLI, TUI, and
 future web apps run identical crypto.
 
@@ -15,10 +15,10 @@ and cross-tool [workflows](docs/workflows.md).
 ## Workspace layout
 
 ```
-cipherpunk/
+backpack/
 ├── Cargo.toml            cargo workspace
 └── crates/
-    ├── cph-core/         shared crypto primitives (lib)
+    ├── bp-core/         shared crypto primitives (lib)
     │   ├── kdf.rs        Argon2id passphrase → 32-byte key
     │   ├── stream.rs     chunked ChaCha20-Poly1305 (STREAM)
     │   └── error.rs      typed errors
@@ -26,7 +26,7 @@ cipherpunk/
     ├── scrub/            metadata stripper CLI (lib + bin)
     ├── split/            Shamir secret sharing CLI (lib + bin)
     ├── keyring/          Ed25519/X25519 identity manager (lib + bin + TUI)
-    └── launcher/         `cipherpunk` boot menu TUI (cyberdeck entry point)
+    └── launcher/         `backpack` boot menu TUI (cyberdeck entry point)
 ```
 
 ## Build
@@ -68,7 +68,7 @@ veil dec --identity alice secret.pdf.veil # only alice's key decrypts
 
 Uses X25519 key agreement with a fresh ephemeral key per file (anonymous
 sender), then the same ChaCha20-Poly1305 stream. `--identity` unlocks the
-keystore (`$CIPHERPUNK_PASSPHRASE` / prompt); `--keyring` / `$CIPHERPUNK_KEYRING`
+keystore (`$BACKPACK_PASSPHRASE` / prompt); `--keyring` / `$BACKPACK_KEYRING`
 override its path.
 
 Run `veil --help` for all options.
@@ -124,7 +124,7 @@ Run `split --help` for all options.
 
 Generate and manage signing/encryption identities. Each identity holds an
 Ed25519 signing keypair and an X25519 key-agreement keypair. Private keys live
-in a keystore that is **encrypted at rest** with `veil`'s crypto (`cph-core`):
+in a keystore that is **encrypted at rest** with `veil`'s crypto (`bp-core`):
 the on-disk file is a `VEIL1` ciphertext sealed under a passphrase.
 
 ```sh
@@ -138,12 +138,12 @@ keyring verify alice.pub msg.txt msg.sig  # no passphrase needed
 Public identities and signatures are single-line, copy-pasteable text:
 
 ```text
-CPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
-CPSIG1 <ed25519 signature hex>
+BPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
+BPSIG1 <ed25519 signature hex>
 ```
 
-- Keystore defaults to `~/.config/cipherpunk/keyring.veil`; override with
-  `--keyring` or `$CIPHERPUNK_KEYRING`. Set `$CIPHERPUNK_PASSPHRASE` to skip
+- Keystore defaults to `~/.config/backpack/keyring.veil`; override with
+  `--keyring` or `$BACKPACK_KEYRING`. Set `$BACKPACK_PASSPHRASE` to skip
   prompts (scripts/CI).
 - `verify` is stateless — it only needs the public line, message, and signature.
 - The X25519 key is published in `export` to enable public-key file encryption
@@ -152,7 +152,7 @@ CPSIG1 <ed25519 signature hex>
 An interactive terminal UI over the same store is available as `keyring-tui`
 (browse, generate, export, delete). Run `keyring --help` for all CLI options.
 
-### `cipherpunk` — launcher
+### `backpack` — launcher
 
 The boot menu for the suite: a full-screen TUI that lists every tool, launches
 the selected one (arg prompt for CLI tools, direct handoff for TUIs), and
@@ -162,7 +162,7 @@ console. See [docs/launcher.md](docs/launcher.md) for the boot-at-login recipe.
 
 ## Cryptography
 
-`cph-core` provides the shared primitives:
+`bp-core` provides the shared primitives:
 
 | Concern            | Choice                                                    |
 |--------------------|-----------------------------------------------------------|

@@ -41,12 +41,12 @@ Expected output: six binaries, roughly 6 MB total.
 
 ```sh
 # from the build machine
-scp target/aarch64-unknown-linux-musl/release/{cipherpunk,veil,scrub,split,keyring,keyring-tui} \
-    deck@pi:/opt/cipherpunk/
+scp target/aarch64-unknown-linux-musl/release/{backpack,veil,scrub,split,keyring,keyring-tui} \
+    deck@pi:/opt/backpack/
 ```
 
 Keep all six in **one directory** — the launcher resolves the tools as siblings
-of its own binary, so no PATH setup is needed. Add `/opt/cipherpunk` to PATH
+of its own binary, so no PATH setup is needed. Add `/opt/backpack` to PATH
 anyway if you want the tools from a shell.
 
 ## 3. Boot straight into the suite
@@ -64,7 +64,7 @@ ExecStart=-/sbin/agetty --autologin deck --noclear %I $TERM
 ```sh
 # ~deck/.profile
 if [ "$(tty)" = "/dev/tty1" ]; then
-    exec /opt/cipherpunk/cipherpunk
+    exec /opt/backpack/backpack
 fi
 ```
 
@@ -75,10 +75,12 @@ Quitting the launcher ends the session; getty logs back in and restarts it. The
 
 - **Font:** install `terminus-font` and set e.g. `ter-v16n` in
   `/etc/vconsole.conf` — the TUIs use box-drawing and block glyphs.
-- **Colors:** everything renders in the basic ANSI-16 palette; nothing needs
-  truecolor.
-- **Keystore:** lives at `~/.config/cipherpunk/keyring.veil` for the autologin
-  user; override with `CIPHERPUNK_KEYRING` if you keep it on removable media.
+- **Colors:** the TUIs use truecolor amber (#FFB000 family). The bare Linux VT
+  approximates RGB onto its 16-color palette; for authentic amber, retune the
+  console palette (kernel param `vt.default_red/grn/blu` or an escape sequence
+  in the profile) or run a truecolor terminal (kmscon/fbterm/foot).
+- **Keystore:** lives at `~/.config/backpack/keyring.veil` for the autologin
+  user; override with `BACKPACK_KEYRING` if you keep it on removable media.
 
 ## Performance notes (Argon2)
 
@@ -90,6 +92,6 @@ Keystore/passphrase unlocks run Argon2id at 64 MiB / 3 passes:
 | Pi 3 | ~1s |
 | Pi Zero 2 (512 MB) | a few seconds; fine, but leave headroom — the KDF wants 64 MiB free |
 
-These parameters are compile-time constants in `cph-core::kdf`; lower `M_COST_KIB`
+These parameters are compile-time constants in `bp-core::kdf`; lower `M_COST_KIB`
 if you target very small boards (that weakens brute-force resistance — see the
 threat model in the [README](../README.md)).

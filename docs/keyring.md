@@ -16,7 +16,7 @@ keyring [--keyring PATH] <command>
   list                       List identities and fingerprints
   export NAME                Print an identity's public line (share this)
   rm NAME                    Delete an identity
-  sign --key NAME [INPUT]    Sign a file (or stdin); prints a CPSIG1 line
+  sign --key NAME [INPUT]    Sign a file (or stdin); prints a BPSIG1 line
   verify PUBFILE MSG SIGFILE Verify a signature (no passphrase needed)
 ```
 
@@ -30,13 +30,13 @@ keyring verify alice.pub msg.txt msg.sig
 
 ## Keystore
 
-- Default path `~/.config/cipherpunk/keyring.veil`; override with `--keyring` or
-  `$CIPHERPUNK_KEYRING`.
-- Encrypted at rest by sealing the whole store with [`cph-core`](cph-core.md)
+- Default path `~/.config/backpack/keyring.veil`; override with `--keyring` or
+  `$BACKPACK_KEYRING`.
+- Encrypted at rest by sealing the whole store with [`bp-core`](bp-core.md)
   (`seal`/`open`, i.e. the same Argon2id + ChaCha20-Poly1305 as `veil`). The
   on-disk file is a `VEIL1` ciphertext — no plaintext key material or even
   identity names.
-- Unlock passphrase comes from `$CIPHERPUNK_PASSPHRASE` or the prompt (entered
+- Unlock passphrase comes from `$BACKPACK_PASSPHRASE` or the prompt (entered
   twice when the store is first created).
 
 Operations that touch private keys (`gen`, `list`, `export`, `rm`, `sign`)
@@ -52,7 +52,7 @@ keyring-tui        # unlock, then browse identities
 ```
 
 It unlocks the store in the normal terminal (passphrase prompt or
-`$CIPHERPUNK_PASSPHRASE`), then shows a two-pane view: the identity list on the
+`$BACKPACK_PASSPHRASE`), then shows a two-pane view: the identity list on the
 left, details (fingerprint + public line) on the right.
 
 | Key | Action |
@@ -71,8 +71,8 @@ stay in the CLI.
 Public identities and signatures are single-line, copy-pasteable text:
 
 ```text
-CPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
-CPSIG1 <ed25519 signature hex>
+BPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
+BPSIG1 <ed25519 signature hex>
 ```
 
 A **fingerprint** (shown by `list` / `verify`) is the first 8 bytes of
@@ -101,4 +101,4 @@ SHA-256(ed25519 pubkey), grouped as `xxxx-xxxx-xxxx-xxxx`.
 
 ## See also
 
-[cph-core](cph-core.md) · [veil](veil.md) · [workflows](workflows.md)
+[bp-core](bp-core.md) · [veil](veil.md) · [workflows](workflows.md)

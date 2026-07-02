@@ -1,11 +1,11 @@
-# cipherpunk (launcher)
+# backpack (launcher)
 
 The boot menu for the suite — the binary a cyberdeck starts at login. A
 full-screen phosphor-green menu that launches the suite's tools and takes the
 terminal back when they exit.
 
 ```sh
-cipherpunk
+backpack
 ```
 
 ## Keys
@@ -56,7 +56,7 @@ ExecStart=-/sbin/agetty --autologin deck --noclear %I $TERM
 ```sh
 # ~deck/.profile (or .bash_profile)
 if [ "$(tty)" = "/dev/tty1" ]; then
-    exec cipherpunk
+    exec backpack
 fi
 ```
 

@@ -1,7 +1,7 @@
-# Cipherpunk Tools — Initial Tool List
+# Backpack Tools — Initial Tool List
 
 A suite of privacy, crypto, and sovereignty tools built in Rust. Shared crypto
-core (`cph-core`) compiled to native + WASM so CLI, TUI, and web apps all reuse
+core (`bp-core`) compiled to native + WASM so CLI, TUI, and web apps all reuse
 one audited primitive layer.
 
 **Stack:** Rust. Core library + CLI/TUI binaries + WASM-backed web apps in a
@@ -86,10 +86,10 @@ Later prove the file existed at time T without revealing its contents.
   dispute over prior art.*
 
 ### 8. `vault-paste` — End-to-End Encrypted Pastebin (web app)
-Paste text, encrypt in the browser (WASM built from `cph-core`), upload only
+Paste text, encrypt in the browser (WASM built from `bp-core`), upload only
 ciphertext, share a link with the key in the URL fragment. Burn-after-read.
 
-- **Stack:** Rust WASM (`cph-core`) + TypeScript frontend + Axum backend
+- **Stack:** Rust WASM (`bp-core`) + TypeScript frontend + Axum backend
 - **User story:** *As someone sending a password to a coworker, I want to share a
   self-destructing link where the server never sees the plaintext, so that the
   secret is exposed only once and to only the intended reader.*
@@ -98,7 +98,7 @@ ciphertext, share a link with the key in the URL fragment. Burn-after-read.
 
 ## Shared Core
 
-### `cph-core` — Crypto Primitives (lib, native + WASM)
+### `bp-core` — Crypto Primitives (lib, native + WASM)
 Single audited home for AEAD, KDF, key types, encoding, and Shamir logic. Every
 tool depends on it. Compiles to WASM for the web apps so browser and CLI run
 identical crypto.
@@ -110,7 +110,7 @@ identical crypto.
 ---
 
 ## Suggested Build Order
-1. `cph-core` + `veil` together — proves lib → CLI → WASM pattern end to end.
+1. `bp-core` + `veil` together — proves lib → CLI → WASM pattern end to end.
 2. `scrub`, `split` — bounded, immediately useful.
 3. `keyring` — unlocks the identity layer.
 4. Everything else builds on the above.

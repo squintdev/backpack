@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errors returned by `cph-core`.
+/// Errors returned by `bp-core`.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("i/o error: {0}")]

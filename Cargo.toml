@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/cph-core",
+    "crates/bp-core",
     "crates/veil",
     "crates/scrub",
     "crates/split",
@@ -13,7 +13,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/squint/cipherpunk"
+repository = "https://github.com/squint/backpack"
 
 # Deck builds: small, stripped, self-contained binaries.
 [profile.release]
@@ -23,7 +23,7 @@ strip = "symbols"
 panic = "abort"
 
 [workspace.dependencies]
-cph-core = { path = "crates/cph-core" }
+bp-core = { path = "crates/bp-core" }
 keyring = { path = "crates/keyring" }
 chacha20poly1305 = "0.10"
 argon2 = "0.5"

@@ -1,10 +1,10 @@
-# cph-core
+# bp-core
 
-Shared crypto primitives for the cipherpunk suite. Every tool depends on this
+Shared crypto primitives for the backpack suite. Every tool depends on this
 crate so that one audited layer of key derivation, authenticated encryption, and
 stream framing is reused everywhere instead of duplicated.
 
-`cph-core` is a library, not a binary. It is native-first and WASM-ready.
+`bp-core` is a library, not a binary. It is native-first and WASM-ready.
 
 ## Modules
 
@@ -19,16 +19,16 @@ stream framing is reused everywhere instead of duplicated.
 
 ```rust
 // Passphrase mode
-cph_core::seal(&mut reader, &mut writer, passphrase)?;   // -> VEIL1 stream
-cph_core::open(&mut reader, &mut writer, passphrase)?;
+bp_core::seal(&mut reader, &mut writer, passphrase)?;   // -> VEIL1 stream
+bp_core::open(&mut reader, &mut writer, passphrase)?;
 
 // Raw-key mode (caller supplies a 32-byte key, provides its own header)
-cph_core::seal_with_key(&mut reader, &mut writer, &key32)?;
-cph_core::open_with_key(&mut reader, &mut writer, &key32)?;
+bp_core::seal_with_key(&mut reader, &mut writer, &key32)?;
+bp_core::open_with_key(&mut reader, &mut writer, &key32)?;
 
 // Public-key mode (X25519)
-cph_core::seal_to_recipient(&mut reader, &mut writer, &recipient_x_pub)?;  // -> VEILX1
-cph_core::open_as_recipient(&mut reader, &mut writer, &recipient_x_sk)?;
+bp_core::seal_to_recipient(&mut reader, &mut writer, &recipient_x_pub)?;  // -> VEILX1
+bp_core::open_as_recipient(&mut reader, &mut writer, &recipient_x_sk)?;
 ```
 
 All functions stream: they take `Read`/`Write` and never buffer the whole input

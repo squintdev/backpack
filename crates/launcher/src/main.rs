@@ -1,4 +1,4 @@
-//! `cipherpunk` — the boot menu for the suite.
+//! `backpack` — the boot menu for the suite.
 //!
 //! This is the binary a cyberdeck starts at login: a full-screen menu that
 //! launches the suite's tools and takes the terminal back when they exit.
@@ -21,7 +21,7 @@ use app::{Action, App};
 
 fn main() {
     if let Err(e) = run() {
-        eprintln!("cipherpunk: {e:#}");
+        eprintln!("backpack: {e:#}");
         std::process::exit(1);
     }
 }

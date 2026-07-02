@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn roundtrip_small() {
-        assert_eq!(roundtrip(b"hello cipherpunk", b"pw"), b"hello cipherpunk");
+        assert_eq!(roundtrip(b"hello backpack", b"pw"), b"hello backpack");
     }
 
     #[test]

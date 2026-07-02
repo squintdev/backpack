@@ -1,6 +1,6 @@
-//! Rendering for the launcher. Phosphor-terminal aesthetic, restricted to the
-//! basic ANSI palette so it renders identically on the Linux framebuffer
-//! console (the cyberdeck target) and any desktop emulator.
+//! Rendering for the launcher. Amber-phosphor monochrome, like a P3 CRT.
+//! Colors are truecolor RGB; the bare Linux VT approximates them onto its
+//! 16-color palette (see docs/deploy.md for retuning the console to amber).
 
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -10,20 +10,23 @@ use ratatui::Frame;
 
 use crate::app::{App, Mode, TOOLS};
 
-/// ANSI-Shadow "CIPHERPUNK", 78 columns — fits an 80-column deck screen.
+/// ANSI-Shadow "BACKPACK", 64 columns — fits an 80-column deck screen.
 const BANNER: [&str; 6] = [
-    " ██████╗██╗██████╗ ██╗  ██╗███████╗██████╗ ██████╗ ██╗   ██╗███╗   ██╗██╗  ██╗",
-    "██╔════╝██║██╔══██╗██║  ██║██╔════╝██╔══██╗██╔══██╗██║   ██║████╗  ██║██║ ██╔╝",
-    "██║     ██║██████╔╝███████║█████╗  ██████╔╝██████╔╝██║   ██║██╔██╗ ██║█████╔╝ ",
-    "██║     ██║██╔═══╝ ██╔══██║██╔══╝  ██╔══██╗██╔═══╝ ██║   ██║██║╚██╗██║██╔═██╗ ",
-    "╚██████╗██║██║     ██║  ██║███████╗██║  ██║██║     ╚██████╔╝██║╚██╗██║██║  ██╗",
-    " ╚═════╝╚═╝╚═╝     ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝      ╚═════╝ ╚═╝ ╚═══╝╚═╝  ╚═╝",
+    "██████╗  █████╗  ██████╗██╗  ██╗██████╗  █████╗  ██████╗██╗  ██╗",
+    "██╔══██╗██╔══██╗██╔════╝██║ ██╔╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝",
+    "██████╔╝███████║██║     █████╔╝ ██████╔╝███████║██║     █████╔╝ ",
+    "██╔══██╗██╔══██║██║     ██╔═██╗ ██╔═══╝ ██╔══██║██║     ██╔═██╗ ",
+    "██████╔╝██║  ██║╚██████╗██║  ██╗██║     ██║  ██║╚██████╗██║  ██╗",
+    "╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝",
 ];
 
-const PHOSPHOR: Color = Color::Green;
-const ACCENT: Color = Color::Cyan;
-const ALERT: Color = Color::Magenta;
-const DIM: Color = Color::DarkGray;
+// Amber phosphor, monochrome — classic P3 CRT. On terminals without truecolor
+// (the bare Linux VT approximates RGB to its 16-color palette) these land on
+// the yellow slots; docs/deploy.md shows how to retune the console palette.
+const PHOSPHOR: Color = Color::Rgb(0xFF, 0xB0, 0x00);
+const ACCENT: Color = Color::Rgb(0xFF, 0xD1, 0x4A);
+const ALERT: Color = Color::Rgb(0xFF, 0xE0, 0x82);
+const DIM: Color = Color::Rgb(0x8F, 0x62, 0x00);
 
 pub fn render(f: &mut Frame, app: &App) {
     let banner_h = if f.area().width >= 80 { 8 } else { 3 };
@@ -59,7 +62,7 @@ fn render_banner(f: &mut Frame, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled("░▒▓ ", Style::default().fg(DIM)),
             Span::styled(
-                "C I P H E R P U N K",
+                "B A C K P A C K",
                 Style::default().fg(PHOSPHOR).add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ▓▒░", Style::default().fg(DIM)),
@@ -127,7 +130,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for l in tool.about {
-        lines.push(Line::from(Span::styled(*l, Style::default().fg(Color::Gray))));
+        lines.push(Line::from(Span::styled(*l, Style::default().fg(PHOSPHOR))));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -151,7 +154,7 @@ fn render_detail(f: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             Span::styled("  $ ", Style::default().fg(DIM)),
             Span::styled(format!("{} ", tool.bin), Style::default().fg(ACCENT)),
-            Span::styled(app.args.clone(), Style::default().fg(Color::White)),
+            Span::styled(app.args.clone(), Style::default().fg(ALERT)),
             Span::styled("█", Style::default().fg(PHOSPHOR)),
         ]));
     }

@@ -34,7 +34,7 @@ veil dec --identity alice secret.pdf.veil # only alice's key decrypts
 ```
 
 `--identity` opens the keystore to fetch the private key; supply its passphrase
-via `CIPHERPUNK_PASSPHRASE` or the prompt. `--keyring` / `$CIPHERPUNK_KEYRING`
+via `BACKPACK_PASSPHRASE` or the prompt. `--keyring` / `$BACKPACK_KEYRING`
 override the keystore path.
 
 ## Output naming
@@ -49,14 +49,14 @@ destination file.
 
 ## How it works
 
-`veil` is a thin CLI over [`cph-core`](cph-core.md):
+`veil` is a thin CLI over [`bp-core`](bp-core.md):
 
 | Command | Under the hood |
 |---------|----------------|
-| `enc` (passphrase) | `cph_core::seal` — Argon2id + ChaCha20-Poly1305, `VEIL1` format |
-| `dec` (passphrase) | `cph_core::open` |
-| `enc -r` | parse the `CPKEY1` line, `cph_core::seal_to_recipient` (X25519), `VEILX1` |
-| `dec --identity` | open keystore, `cph_core::open_as_recipient` with the identity's X25519 key |
+| `enc` (passphrase) | `bp_core::seal` — Argon2id + ChaCha20-Poly1305, `VEIL1` format |
+| `dec` (passphrase) | `bp_core::open` |
+| `enc -r` | parse the `BPKEY1` line, `bp_core::seal_to_recipient` (X25519), `VEILX1` |
+| `dec --identity` | open keystore, `bp_core::open_as_recipient` with the identity's X25519 key |
 
 The mode is chosen by the flags: `-r` selects public-key encryption, `--identity`
 selects public-key decryption; otherwise it is passphrase mode. The two formats
@@ -67,8 +67,8 @@ are distinguished on disk by their magic header (`VEIL1` vs `VEILX1`).
 | Variable | Used for |
 |----------|----------|
 | `VEIL_PASSPHRASE` | Passphrase mode, non-interactive |
-| `CIPHERPUNK_PASSPHRASE` | Keystore passphrase for `--identity` |
-| `CIPHERPUNK_KEYRING` | Keystore path for `--identity` |
+| `BACKPACK_PASSPHRASE` | Keystore passphrase for `--identity` |
+| `BACKPACK_KEYRING` | Keystore path for `--identity` |
 
 ## Security notes
 
@@ -82,4 +82,4 @@ are distinguished on disk by their magic header (`VEIL1` vs `VEILX1`).
 
 ## See also
 
-[cph-core](cph-core.md) · [keyring](keyring.md) · [workflows](workflows.md)
+[bp-core](bp-core.md) · [keyring](keyring.md) · [workflows](workflows.md)
