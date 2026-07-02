@@ -35,7 +35,8 @@ publish-a-leak pipeline.
 ```
 
 See [workflows.md](workflows.md) for concrete end-to-end recipes that combine
-the tools.
+the tools, and [deploy.md](deploy.md) for putting the suite on a Raspberry Pi
+cyberdeck.
 
 ## Build
 

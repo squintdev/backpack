@@ -15,6 +15,13 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/squint/cipherpunk"
 
+# Deck builds: small, stripped, self-contained binaries.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
 [workspace.dependencies]
 cph-core = { path = "crates/cph-core" }
 keyring = { path = "crates/keyring" }
