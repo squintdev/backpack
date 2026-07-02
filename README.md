@@ -7,7 +7,8 @@ everywhere at once. The core is native-first and WASM-ready, so CLI, TUI, and
 future web apps run identical crypto.
 
 See [`initial-tool-list.md`](initial-tool-list.md) for the full planned suite and
-per-tool user stories.
+per-tool user stories, and [`docs/`](docs/README.md) for per-tool documentation
+and cross-tool [workflows](docs/workflows.md).
 
 > **Status:** v0.1, unaudited. Do not use for high-stakes secrets yet.
 
