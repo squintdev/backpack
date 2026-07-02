@@ -25,10 +25,11 @@ nostr fetch --author npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyj
 Priority: `-r/--relay` (repeatable) → `$BACKPACK_NOSTR_RELAYS` (comma-separated)
 → built-in defaults (`relay.damus.io`, `nos.lol`, `relay.nostr.band`).
 
-- `post` sends to **every** configured relay and reports accept/reject per
-  relay; it fails only if none accept.
+- `post` sends to **every** configured relay in parallel and reports
+  accept/reject per relay; it fails only if none accept.
 - `fetch` reads from the **first** relay that answers.
-- Socket reads are bounded (10 s) so a silent relay cannot hang the CLI.
+- Everything is bounded: 5 s TCP connect timeout, 10 s socket reads. A dead or
+  blackholed relay costs seconds, not minutes, and can never hang the client.
 
 ## Identity
 

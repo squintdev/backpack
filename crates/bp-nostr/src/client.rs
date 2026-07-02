@@ -3,7 +3,7 @@
 //! Shared by the `nostr` CLI and the `backpack` launcher. Reads are bounded by
 //! a socket timeout so a silent relay cannot hang the caller.
 
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use tungstenite::stream::MaybeTlsStream;
@@ -14,6 +14,9 @@ use crate::relay::{close_frame, parse, publish_frame, req_frame, Filter, RelayMs
 
 /// Per-relay socket read timeout.
 const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// TCP connect timeout. Without one, a relay that drops packets (instead of
+/// refusing) stalls at the OS default — minutes — before the next relay runs.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Relays used when the caller supplies none.
 pub const DEFAULT_RELAYS: &[&str] = &[
@@ -47,15 +50,40 @@ pub fn resolve_relays(explicit: &[String]) -> Vec<String> {
 type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 type IoResult<T> = std::result::Result<T, String>;
 
+/// Host and port of a `ws://` / `wss://` relay URL.
+fn host_port(url: &str) -> IoResult<(String, u16)> {
+    let rest = url
+        .strip_prefix("wss://")
+        .or_else(|| url.strip_prefix("ws://"))
+        .ok_or_else(|| format!("{url}: expected a ws:// or wss:// URL"))?;
+    let default_port = if url.starts_with("wss://") { 443 } else { 80 };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    match authority.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() => {
+            let port = port.parse().map_err(|_| format!("{url}: bad port"))?;
+            Ok((host.to_string(), port))
+        }
+        _ => Ok((authority.to_string(), default_port)),
+    }
+}
+
+/// Connect with a bounded TCP connect and bounded reads, so one dead or
+/// blackholed relay can never stall the caller for minutes.
 fn connect(url: &str) -> IoResult<Socket> {
+    let (host, port) = host_port(url)?;
+    let addr = (host.as_str(), port)
+        .to_socket_addrs()
+        .map_err(|e| format!("resolving {host}: {e}"))?
+        .next()
+        .ok_or_else(|| format!("{host}: no addresses"))?;
+    let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
+        .map_err(|e| format!("connecting to {url}: {e}"))?;
+    stream
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .and_then(|_| stream.set_write_timeout(Some(READ_TIMEOUT)))
+        .map_err(|e| format!("setting timeouts: {e}"))?;
     let (socket, _resp) =
-        tungstenite::connect(url).map_err(|e| format!("connecting to {url}: {e}"))?;
-    let timeout = match socket.get_ref() {
-        MaybeTlsStream::Rustls(s) => s.get_ref().set_read_timeout(Some(READ_TIMEOUT)),
-        MaybeTlsStream::Plain(s) => s.set_read_timeout(Some(READ_TIMEOUT)),
-        _ => Ok(()),
-    };
-    timeout.map_err(|e| format!("setting timeout: {e}"))?;
+        tungstenite::client_tls(url, stream).map_err(|e| format!("handshake with {url}: {e}"))?;
     Ok(socket)
 }
 
@@ -85,13 +113,28 @@ pub fn publish_to(url: &str, ev: &Event) -> IoResult<String> {
     }
 }
 
-/// Publish to every relay in the list. Returns per-relay results
+/// Publish to every relay in the list, in parallel — total wall time is the
+/// slowest relay, not the sum. Returns per-relay results in input order:
 /// `(url, Ok(relay message) | Err(reason))`.
 pub fn publish(relays: &[String], ev: &Event) -> Vec<(String, IoResult<String>)> {
-    relays
-        .iter()
-        .map(|url| (url.clone(), publish_to(url, ev)))
-        .collect()
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = relays
+            .iter()
+            .map(|url| {
+                let ev = ev.clone();
+                (url.clone(), scope.spawn(move || publish_to(url, &ev)))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|(url, h)| {
+                let result = h
+                    .join()
+                    .unwrap_or_else(|_| Err("publish thread panicked".to_string()));
+                (url, result)
+            })
+            .collect()
+    })
 }
 
 /// Run one subscription against one relay to EOSE. Every received event is
@@ -141,4 +184,18 @@ pub fn fetch(relays: &[String], filter: &Filter) -> IoResult<(String, Vec<Event>
         }
     }
     Err(last)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_port_parses_relay_urls() {
+        assert_eq!(host_port("wss://relay.damus.io").unwrap(), ("relay.damus.io".into(), 443));
+        assert_eq!(host_port("wss://relay.damus.io/").unwrap(), ("relay.damus.io".into(), 443));
+        assert_eq!(host_port("ws://localhost:7000").unwrap(), ("localhost".into(), 7000));
+        assert_eq!(host_port("wss://r.example:8443/sub/path").unwrap(), ("r.example".into(), 8443));
+        assert!(host_port("https://not-a-relay").is_err());
+    }
 }
