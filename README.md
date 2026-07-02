@@ -157,7 +157,7 @@ An interactive terminal UI over the same store is available as `keyring-tui`
 The boot menu for the suite: a full-screen TUI that lists every tool, launches
 the selected one (arg prompt for CLI tools, direct handoff for TUIs), and
 resumes when it exits. Designed as the auto-start entry point for a
-terminal-only cyberdeck — basic ANSI colors only, renders on the bare Linux
+terminal-only cyberdeck — amber phosphor monochrome, renders on the bare Linux
 console. See [docs/launcher.md](docs/launcher.md) for the boot-at-login recipe.
 
 ## Cryptography

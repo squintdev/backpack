@@ -1,7 +1,7 @@
 # backpack (launcher)
 
 The boot menu for the suite — the binary a cyberdeck starts at login. A
-full-screen phosphor-green menu that launches the suite's tools and takes the
+full-screen amber-phosphor menu that launches the suite's tools and takes the
 terminal back when they exit.
 
 ```sh
@@ -37,8 +37,10 @@ Suite binaries are resolved as **siblings of the launcher executable** first
 
 ## Console-friendly by design
 
-The UI restricts itself to the basic ANSI palette and renders identically on the
-Linux framebuffer console (no X/Wayland) and desktop emulators. On screens
+The UI is monochrome amber phosphor (truecolor #FFB000 family) and runs on the
+Linux framebuffer console (no X/Wayland) as well as desktop emulators — the
+bare VT approximates the amber onto its 16-color palette (see
+[deploy.md](deploy.md) for retuning it). On screens
 narrower than 80 columns the ASCII banner collapses to a one-line badge. Use a
 console font with box-drawing glyphs (e.g. Terminus) for best results.
 
