@@ -4,14 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "File encryptor CLI for the cipherpunk suite"
+description = "File encryptor CLI for the backpack suite"
 
 [[bin]]
 name = "veil"
 path = "src/main.rs"
 
 [dependencies]
-cph-core = { workspace = true }
+bp-core = { workspace = true }
 keyring = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }

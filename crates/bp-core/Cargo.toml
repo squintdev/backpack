@@ -1,10 +1,10 @@
 [package]
-name = "cph-core"
+name = "bp-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Shared crypto primitives for the cipherpunk tool suite"
+description = "Shared crypto primitives for the backpack tool suite"
 
 [dependencies]
 chacha20poly1305 = { workspace = true }

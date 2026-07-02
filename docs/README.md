@@ -1,29 +1,29 @@
-# cipherpunk documentation
+# backpack documentation
 
 A suite of privacy, crypto, and sovereignty tools in Rust, sharing one audited
-crypto core (`cph-core`).
+crypto core (`bp-core`).
 
 ## Components
 
 | Tool | Kind | One-liner |
 |------|------|-----------|
-| [`cph-core`](cph-core.md) | library | Shared crypto primitives (KDF, AEAD stream, public-key sealing) |
+| [`bp-core`](bp-core.md) | library | Shared crypto primitives (KDF, AEAD stream, public-key sealing) |
 | [`veil`](veil.md) | CLI | Encrypt/decrypt files with a passphrase **or** a public key |
 | [`scrub`](scrub.md) | CLI | Strip identifying metadata (EXIF/GPS, XMP, PDF Info) before sharing |
 | [`split`](split.md) | CLI | Shamir secret sharing: split a secret into `k`-of-`n` shares |
 | [`keyring`](keyring.md) | CLI + TUI + lib | Manage Ed25519/X25519 identities in an encrypted store |
-| [`cipherpunk`](launcher.md) | TUI | Boot menu that launches the whole suite (cyberdeck entry point) |
+| [`backpack`](launcher.md) | TUI | Boot menu that launches the whole suite (cyberdeck entry point) |
 
 ## How they fit together
 
-`cph-core` is the foundation every other tool builds on. `keyring` holds the
+`bp-core` is the foundation every other tool builds on. `keyring` holds the
 identities; `veil` uses them to encrypt to a person instead of a passphrase.
 `scrub` and `split` are standalone but compose naturally in a share-a-secret or
 publish-a-leak pipeline.
 
 ```
                  ┌───────────┐
-                 │ cph-core  │  KDF · AEAD stream · X25519 seal
+                 │ bp-core  │  KDF · AEAD stream · X25519 seal
                  └─────┬─────┘
         ┌──────────────┼───────────────┬───────────────┐
         │              │               │               │

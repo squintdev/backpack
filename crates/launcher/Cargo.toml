@@ -4,10 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Boot menu / launcher TUI for the cipherpunk suite"
+description = "Boot menu / launcher TUI for the backpack suite"
 
 [[bin]]
-name = "cipherpunk"
+name = "backpack"
 path = "src/main.rs"
 
 [dependencies]

@@ -170,6 +170,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bp-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "chacha20poly1305",
+ "hkdf",
+ "rand_core 0.6.4",
+ "sha2",
+ "thiserror 2.0.18",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -344,20 +358,6 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
-
-[[package]]
-name = "cph-core"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "chacha20poly1305",
- "hkdf",
- "rand_core 0.6.4",
- "sha2",
- "thiserror 2.0.18",
- "x25519-dalek",
- "zeroize",
-]
 
 [[package]]
 name = "cpufeatures"
@@ -955,8 +955,8 @@ name = "keyring"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bp-core",
  "clap",
- "cph-core",
  "directories",
  "ed25519-dalek",
  "hex",
@@ -1885,8 +1885,8 @@ name = "veil"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bp-core",
  "clap",
- "cph-core",
  "keyring",
  "rpassword",
 ]

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Keypair manager CLI for the cipherpunk suite"
+description = "Keypair manager CLI for the backpack suite"
 
 [[bin]]
 name = "keyring"
@@ -15,7 +15,7 @@ name = "keyring-tui"
 path = "src/tui/main.rs"
 
 [dependencies]
-cph-core = { workspace = true }
+bp-core = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }

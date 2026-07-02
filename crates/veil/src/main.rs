@@ -36,8 +36,8 @@ const EXT: &str = "veil";
         tar c dir | veil enc > d.veil    Encrypt a stream\n\n\
         ENVIRONMENT:\n  \
         VEIL_PASSPHRASE        Passphrase for passphrase mode (scripts/CI).\n  \
-        CIPHERPUNK_PASSPHRASE  Keystore passphrase for --identity.\n  \
-        CIPHERPUNK_KEYRING     Keystore path for --identity.\n\n\
+        BACKPACK_PASSPHRASE    Keystore passphrase for --identity.\n  \
+        BACKPACK_KEYRING       Keystore path for --identity.\n\n\
         SECURITY: v0.1, unaudited."
 )]
 struct Cli {
@@ -68,7 +68,7 @@ struct Io {
     #[arg(long)]
     identity: Option<String>,
     /// (dec) Keystore path for --identity (overrides the default and
-    /// $CIPHERPUNK_KEYRING).
+    /// $BACKPACK_KEYRING).
     #[arg(long)]
     keyring: Option<PathBuf>,
 }
@@ -96,13 +96,13 @@ fn encrypt(io: Io) -> Result<()> {
         let txt = fs::read_to_string(rp).with_context(|| format!("reading {}", rp.display()))?;
         let recipient = keyring::PublicIdentity::parse(&txt)?.x;
         return with_streams(&io.input, &out, |r, w| {
-            cph_core::seal_to_recipient(r, w, &recipient).map_err(Into::into)
+            bp_core::seal_to_recipient(r, w, &recipient).map_err(Into::into)
         });
     }
 
     let pass = prompt_new_passphrase()?;
     with_streams(&io.input, &out, |r, w| {
-        cph_core::seal(r, w, pass.as_bytes()).map_err(Into::into)
+        bp_core::seal(r, w, pass.as_bytes()).map_err(Into::into)
     })
 }
 
@@ -110,7 +110,7 @@ fn encrypt(io: Io) -> Result<()> {
 /// (scripting / CI). When set, prompting and confirmation are skipped.
 const PASS_ENV: &str = "VEIL_PASSPHRASE";
 /// Keystore passphrase environment variable (shared with `keyring`).
-const KEYSTORE_PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
+const KEYSTORE_PASS_ENV: &str = "BACKPACK_PASSPHRASE";
 
 fn decrypt(io: Io) -> Result<()> {
     let out = default_dec_output(&io)?;
@@ -121,7 +121,7 @@ fn decrypt(io: Io) -> Result<()> {
             .keyring
             .clone()
             .or_else(keyring::default_keystore_path)
-            .ok_or_else(|| anyhow!("cannot locate keystore; set CIPHERPUNK_KEYRING or --keyring"))?;
+            .ok_or_else(|| anyhow!("cannot locate keystore; set BACKPACK_KEYRING or --keyring"))?;
         let pass = keystore_passphrase()?;
         let store = keyring::KeyStore::open(&path, pass.as_bytes())?;
         let sk = store
@@ -129,7 +129,7 @@ fn decrypt(io: Io) -> Result<()> {
             .ok_or_else(|| anyhow!("no identity named {name:?} in keystore"))?
             .x_secret();
         return with_streams(&io.input, &out, |r, w| {
-            cph_core::open_as_recipient(r, w, &sk).map_err(Into::into)
+            bp_core::open_as_recipient(r, w, &sk).map_err(Into::into)
         });
     }
 
@@ -138,11 +138,11 @@ fn decrypt(io: Io) -> Result<()> {
         Err(_) => rpassword::prompt_password("Passphrase: ").context("reading passphrase")?,
     };
     with_streams(&io.input, &out, |r, w| {
-        cph_core::open(r, w, pass.as_bytes()).map_err(Into::into)
+        bp_core::open(r, w, pass.as_bytes()).map_err(Into::into)
     })
 }
 
-/// Keystore passphrase from `$CIPHERPUNK_PASSPHRASE` or an interactive prompt.
+/// Keystore passphrase from `$BACKPACK_PASSPHRASE` or an interactive prompt.
 fn keystore_passphrase() -> Result<String> {
     match std::env::var(KEYSTORE_PASS_ENV) {
         Ok(p) => Ok(p),

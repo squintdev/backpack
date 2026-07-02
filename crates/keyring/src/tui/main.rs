@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 use app::App;
 
 /// Keystore passphrase environment variable (shared across the suite).
-const PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
+const PASS_ENV: &str = "BACKPACK_PASSPHRASE";
 
 fn main() {
     if let Err(e) = run() {
@@ -54,7 +54,7 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
     Ok(())
 }
 
-/// Keystore passphrase from `$CIPHERPUNK_PASSPHRASE` or an interactive prompt.
+/// Keystore passphrase from `$BACKPACK_PASSPHRASE` or an interactive prompt.
 /// When `confirm` is set (new store), the prompt is entered twice.
 fn passphrase(confirm: bool) -> Result<Zeroizing<String>> {
     if let Ok(p) = std::env::var(PASS_ENV) {

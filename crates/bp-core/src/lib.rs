@@ -1,11 +1,11 @@
-//! `cph-core` — shared crypto primitives for the cipherpunk tool suite.
+//! `bp-core` — shared crypto primitives for the backpack tool suite.
 //!
 //! Every tool in the suite depends on this crate so that one audited layer of
 //! AEAD, KDF, and stream framing is reused everywhere instead of duplicated.
 //!
 //! # Example
 //! ```
-//! use cph_core::{seal, open};
+//! use bp_core::{seal, open};
 //!
 //! let plaintext = b"attack at dawn";
 //! let mut ciphertext = Vec::new();

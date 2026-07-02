@@ -1,6 +1,6 @@
 # Workflows
 
-How the cipherpunk tools combine. Each recipe chains standalone commands; the
+How the backpack tools combine. Each recipe chains standalone commands; the
 tools share formats and (for `veil` + `keyring`) an identity model.
 
 ## 1. Send a file to a person (no shared secret)
@@ -77,7 +77,7 @@ printf 'my keystore passphrase' | split deal -k 2 -n 3 --out-dir keyring-shares/
 
 # To reconstruct when needed:
 cat keyring-shares/*.txt | split combine
-#   feed the result to CIPHERPUNK_PASSPHRASE / the keyring prompt
+#   feed the result to BACKPACK_PASSPHRASE / the keyring prompt
 ```
 
 ## 6. Encrypt-at-rest backup with a passphrase
@@ -95,15 +95,15 @@ For scripts, set `VEIL_PASSPHRASE`.
 
 ## How the pieces relate
 
-- **`cph-core`** is the crypto every tool shares (KDF, AEAD stream, X25519
+- **`bp-core`** is the crypto every tool shares (KDF, AEAD stream, X25519
   seal). `veil` and `keyring` both call it directly.
 - **`keyring` → `veil`.** `keyring export` produces the public line `veil enc -r`
   consumes; `veil dec --identity` reads the private key back out of the keystore.
 - **`keyring` uses `veil`'s crypto for itself.** The keystore file is a `veil`
-  (`cph-core`) ciphertext.
+  (`bp-core`) ciphertext.
 - **`scrub` and `split`** are self-contained but slot into pipelines: scrub
   before you encrypt/publish; split around any secret, including a `veil` or
   `keyring` passphrase.
 
-See each tool's page for details: [cph-core](cph-core.md) · [veil](veil.md) ·
+See each tool's page for details: [bp-core](bp-core.md) · [veil](veil.md) ·
 [scrub](scrub.md) · [split](split.md) · [keyring](keyring.md).

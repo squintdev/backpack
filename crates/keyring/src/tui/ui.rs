@@ -1,4 +1,5 @@
 //! Rendering for the keyring TUI. Pure view logic over [`App`].
+//! Amber-phosphor monochrome, matching the suite launcher.
 
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -7,6 +8,11 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::app::{App, Mode};
+
+const PHOSPHOR: Color = Color::Rgb(0xFF, 0xB0, 0x00);
+const ACCENT: Color = Color::Rgb(0xFF, 0xD1, 0x4A);
+const ALERT: Color = Color::Rgb(0xFF, 0xE0, 0x82);
+const DIM: Color = Color::Rgb(0x8F, 0x62, 0x00);
 
 pub fn render(f: &mut Frame, app: &App) {
     let root = Layout::default()
@@ -38,15 +44,16 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{:<16}", truncate(&id.name, 16)),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(ACCENT),
                 ),
-                Span::styled(id.fingerprint(), Style::default().fg(Color::DarkGray)),
+                Span::styled(id.fingerprint(), Style::default().fg(DIM)),
             ]))
         })
         .collect();
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR))
         .title(format!(" identities ({}) ", ids.len()));
 
     if items.is_empty() {
@@ -62,8 +69,8 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
         .block(block)
         .highlight_style(
             Style::default()
-                .bg(Color::Blue)
-                .fg(Color::White)
+                .bg(PHOSPHOR)
+                .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");
@@ -74,26 +81,27 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_details(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL).title(" details ");
+    let block = Block::default().borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR)).title(" details ");
     let text = match app.selected_identity() {
         None => vec![Line::from("Select or generate an identity.")],
         Some(id) => vec![
             Line::from(vec![
-                Span::styled("name        ", Style::default().fg(Color::DarkGray)),
+                Span::styled("name        ", Style::default().fg(DIM)),
                 Span::raw(id.name.clone()),
             ]),
             Line::from(vec![
-                Span::styled("fingerprint ", Style::default().fg(Color::DarkGray)),
-                Span::styled(id.fingerprint(), Style::default().fg(Color::Yellow)),
+                Span::styled("fingerprint ", Style::default().fg(DIM)),
+                Span::styled(id.fingerprint(), Style::default().fg(ALERT)),
             ]),
             Line::from(""),
             Line::from(Span::styled(
                 "public identity (share this):",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(DIM),
             )),
             Line::from(Span::styled(
                 id.to_line(),
-                Style::default().fg(Color::Green),
+                Style::default().fg(PHOSPHOR),
             )),
         ],
     };
@@ -104,13 +112,14 @@ fn render_details(f: &mut Frame, app: &App, area: Rect) {
 fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let help = "g generate · e export · d delete · j/k move · q quit";
     let line = if app.status.is_empty() {
-        Span::styled(help, Style::default().fg(Color::DarkGray))
+        Span::styled(help, Style::default().fg(DIM))
     } else {
-        Span::styled(app.status.clone(), Style::default().fg(Color::Magenta))
+        Span::styled(app.status.clone(), Style::default().fg(ALERT))
     };
     let p = Paragraph::new(Line::from(line)).block(
         Block::default()
             .borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR))
             .title(format!(" {} ", app.keystore_path().display())),
     );
     f.render_widget(p, area);
@@ -121,11 +130,12 @@ fn render_input_popup(f: &mut Frame, app: &App) {
     f.render_widget(Clear, area);
     let p = Paragraph::new(Line::from(vec![
         Span::raw(&app.input),
-        Span::styled("▏", Style::default().fg(Color::Cyan)),
+        Span::styled("▏", Style::default().fg(ACCENT)),
     ]))
     .block(
         Block::default()
             .borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR))
             .title(" new identity name (Enter=ok, Esc=cancel) "),
     );
     f.render_widget(p, area);
@@ -143,8 +153,9 @@ fn render_confirm_popup(f: &mut Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR))
                 .title(" confirm ")
-                .border_style(Style::default().fg(Color::Red)),
+                .border_style(Style::default().fg(ALERT)),
         );
     f.render_widget(p, area);
 }

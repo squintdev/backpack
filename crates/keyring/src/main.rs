@@ -9,7 +9,7 @@
 //! ```
 //!
 //! Private keys are held in a passphrase-encrypted store
-//! (`~/.config/cipherpunk/keyring.veil` by default).
+//! (`~/.config/backpack/keyring.veil` by default).
 
 use std::fs;
 use std::io::{self, Read};
@@ -24,7 +24,7 @@ use keyring::{
 };
 
 /// Environment variable holding the keystore passphrase (skips prompting).
-const PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
+const PASS_ENV: &str = "BACKPACK_PASSPHRASE";
 
 #[derive(Parser)]
 #[command(
@@ -38,11 +38,11 @@ const PASS_ENV: &str = "CIPHERPUNK_PASSPHRASE";
         keyring sign --key alice msg.txt > msg.sig\n  \
         keyring verify alice.pub msg.txt msg.sig\n\n\
         The private keystore is encrypted under a passphrase. Set \
-        CIPHERPUNK_PASSPHRASE to avoid prompts (scripts/CI); set \
-        CIPHERPUNK_KEYRING to override its path."
+        BACKPACK_PASSPHRASE to avoid prompts (scripts/CI); set \
+        BACKPACK_KEYRING to override its path."
 )]
 struct Cli {
-    /// Path to the keystore file (overrides the default and $CIPHERPUNK_KEYRING).
+    /// Path to the keystore file (overrides the default and $BACKPACK_KEYRING).
     #[arg(long, global = true)]
     keyring: Option<PathBuf>,
 
@@ -190,7 +190,7 @@ fn cmd_verify(pubfile: &PathBuf, message: &PathBuf, sigfile: &PathBuf) -> Result
     }
 }
 
-/// Resolve the keystore path: --keyring, then $CIPHERPUNK_KEYRING, then the
+/// Resolve the keystore path: --keyring, then $BACKPACK_KEYRING, then the
 /// per-user config directory.
 fn store_path(cli: &Cli) -> Result<PathBuf> {
     if let Some(p) = &cli.keyring {
@@ -200,7 +200,7 @@ fn store_path(cli: &Cli) -> Result<PathBuf> {
         .ok_or_else(|| anyhow!("cannot determine config directory; set {PATH_ENV}"))
 }
 
-/// Obtain the keystore passphrase from $CIPHERPUNK_PASSPHRASE or by prompting.
+/// Obtain the keystore passphrase from $BACKPACK_PASSPHRASE or by prompting.
 /// When `confirm` is set (creating a new store), the prompt is entered twice.
 fn passphrase(confirm: bool) -> Result<Zeroizing<String>> {
     if let Ok(p) = std::env::var(PASS_ENV) {

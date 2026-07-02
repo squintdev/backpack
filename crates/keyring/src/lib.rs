@@ -1,14 +1,14 @@
-//! `keyring` — manage signing/encryption identities for the cipherpunk suite.
+//! `keyring` — manage signing/encryption identities for the backpack suite.
 //!
 //! Each identity holds an Ed25519 signing keypair and an X25519 key-agreement
 //! keypair. Private keys live in a [`KeyStore`] that is encrypted at rest with
-//! the suite's own crypto core (`cph-core`): the whole store is sealed under a
+//! the suite's own crypto core (`bp-core`): the whole store is sealed under a
 //! passphrase, so the on-disk file is a `VEIL1` ciphertext.
 //!
 //! Public identities and signatures are single-line, copy-pasteable text:
 //! ```text
-//! CPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
-//! CPSIG1 <ed25519 signature hex>
+//! BPKEY1 <name> <ed25519 pubkey hex> <x25519 pubkey hex>
+//! BPSIG1 <ed25519 signature hex>
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -21,8 +21,8 @@ use thiserror::Error;
 use x25519_dalek::{PublicKey as XPublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-const KEY_TAG: &str = "CPKEY1";
-const SIG_TAG: &str = "CPSIG1";
+const KEY_TAG: &str = "BPKEY1";
+const SIG_TAG: &str = "BPSIG1";
 const STORE_VERSION: u8 = 1;
 
 #[derive(Debug, Error)]
@@ -30,7 +30,7 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Crypto(#[from] cph_core::Error),
+    Crypto(#[from] bp_core::Error),
     #[error("keystore is corrupt: {0}")]
     Corrupt(String),
     #[error("no identity named {0:?}")]
@@ -127,7 +127,7 @@ impl PublicIdentity {
             .join("-")
     }
 
-    /// Serialize to the one-line `CPKEY1 …` wire format.
+    /// Serialize to the one-line `BPKEY1 …` wire format.
     pub fn to_line(&self) -> String {
         format!(
             "{KEY_TAG} {} {} {}",
@@ -137,7 +137,7 @@ impl PublicIdentity {
         )
     }
 
-    /// Parse a `CPKEY1 …` line. Extra whitespace and surrounding blank lines are
+    /// Parse a `BPKEY1 …` line. Extra whitespace and surrounding blank lines are
     /// tolerated; the name must be a single whitespace-free token.
     pub fn parse(s: &str) -> Result<Self> {
         let line = s
@@ -165,12 +165,12 @@ impl PublicIdentity {
     }
 }
 
-/// Serialize a signature to the `CPSIG1 …` wire format.
+/// Serialize a signature to the `BPSIG1 …` wire format.
 pub fn format_signature(sig: &[u8; 64]) -> String {
     format!("{SIG_TAG} {}", hex::encode(sig))
 }
 
-/// Parse a `CPSIG1 …` line into a 64-byte signature.
+/// Parse a `BPSIG1 …` line into a 64-byte signature.
 pub fn parse_signature(s: &str) -> Result<[u8; 64]> {
     let line = s
         .lines()
@@ -187,7 +187,7 @@ pub fn parse_signature(s: &str) -> Result<[u8; 64]> {
         .map_err(|_| Error::BadFormat("signature"))
 }
 
-// --- on-disk (JSON, then sealed by cph-core) -------------------------------
+// --- on-disk (JSON, then sealed by bp-core) -------------------------------
 
 #[derive(Serialize, Deserialize)]
 struct StoredEntry {
@@ -220,7 +220,7 @@ impl KeyStore {
         }
         let sealed = std::fs::read(path)?;
         let mut json = Vec::new();
-        cph_core::open(&mut &sealed[..], &mut json, passphrase)?;
+        bp_core::open(&mut &sealed[..], &mut json, passphrase)?;
         let file: StoredFile =
             serde_json::from_slice(&json).map_err(|e| Error::Corrupt(e.to_string()))?;
         if file.version != STORE_VERSION {
@@ -259,7 +259,7 @@ impl KeyStore {
         };
         let json = serde_json::to_vec(&file).map_err(|e| Error::Corrupt(e.to_string()))?;
         let mut sealed = Vec::new();
-        cph_core::seal(&mut &json[..], &mut sealed, passphrase)?;
+        bp_core::seal(&mut &json[..], &mut sealed, passphrase)?;
 
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -302,9 +302,9 @@ impl KeyStore {
 }
 
 /// Environment variable overriding the keystore path.
-pub const PATH_ENV: &str = "CIPHERPUNK_KEYRING";
+pub const PATH_ENV: &str = "BACKPACK_KEYRING";
 
-/// Default keystore path: `$CIPHERPUNK_KEYRING`, else the per-user config dir.
+/// Default keystore path: `$BACKPACK_KEYRING`, else the per-user config dir.
 ///
 /// Returns `None` only if neither the env var is set nor a config directory can
 /// be determined. Shared so other suite tools (e.g. `veil` recipient mode) look
@@ -313,7 +313,7 @@ pub fn default_keystore_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(PATH_ENV) {
         return Some(PathBuf::from(p));
     }
-    directories::ProjectDirs::from("", "", "cipherpunk")
+    directories::ProjectDirs::from("", "", "backpack")
         .map(|d| d.config_dir().join("keyring.veil"))
 }
 
