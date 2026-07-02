@@ -36,6 +36,9 @@ cargo build --release      # binaries in target/release/
 cargo test                 # run the test suite
 ```
 
+Cross-compiling static ARM binaries for a Raspberry Pi cyberdeck is covered in
+[docs/deploy.md](docs/deploy.md).
+
 ## Tools
 
 ### `veil` — file encryptor

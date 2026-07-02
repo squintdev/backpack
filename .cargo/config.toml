@@ -1,0 +1,21 @@
+# Cross-compilation settings for the cyberdeck target (Raspberry Pi).
+#
+# Static musl builds produce self-contained binaries with no libc dependency:
+# copy them onto any minimal ARM Linux rootfs and they run.
+#
+#   rustup target add aarch64-unknown-linux-musl     # Pi 3/4/5, 64-bit OS
+#   rustup target add armv7-unknown-linux-musleabihf # Pi 2/Zero 2, 32-bit OS
+#   cargo build --release --target aarch64-unknown-linux-musl
+#
+# The linkers below come from cross-gcc packages (Arch: aarch64-linux-gnu-gcc,
+# Debian/Ubuntu: gcc-aarch64-linux-gnu). Alternatively use `cargo install
+# cross` and `cross build --target ...` to do the same inside a container
+# without any host toolchain setup.
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "arm-linux-gnueabihf-gcc"
+rustflags = ["-C", "target-feature=+crt-static"]
