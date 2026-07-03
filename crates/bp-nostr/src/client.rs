@@ -225,18 +225,90 @@ pub fn fetch_all(relays: &[String], filter: &Filter) -> IoResult<Vec<Event>> {
     Ok(events)
 }
 
-/// The newest kind-3 contact list for `author_hex` across all relays, if any.
+/// The newest replaceable event of `kind` for `author_hex` across all relays.
 ///
-/// Contact lists are replaceable events; different relays may hold different
-/// versions, so every relay is asked and the freshest `created_at` wins.
-pub fn latest_contacts(relays: &[String], author_hex: &str) -> IoResult<Option<Event>> {
+/// Replaceable events (contact lists, profiles) may differ per relay, so every
+/// relay is asked and the freshest `created_at` wins.
+pub fn latest_replaceable(
+    relays: &[String],
+    author_hex: &str,
+    kind: u32,
+) -> IoResult<Option<Event>> {
     let filter = Filter {
         authors: Some(vec![author_hex.to_string()]),
-        kinds: Some(vec![crate::contacts::KIND_CONTACTS]),
+        kinds: Some(vec![kind]),
         limit: Some(1),
     };
     let events = fetch_all(relays, &filter)?;
     Ok(events.into_iter().max_by_key(|e| e.created_at))
+}
+
+/// The newest kind-3 contact list for `author_hex` across all relays, if any.
+pub fn latest_contacts(relays: &[String], author_hex: &str) -> IoResult<Option<Event>> {
+    latest_replaceable(relays, author_hex, crate::contacts::KIND_CONTACTS)
+}
+
+/// The newest kind-0 profile for `author_hex`, parsed to its JSON map.
+pub fn latest_profile(
+    relays: &[String],
+    author_hex: &str,
+) -> IoResult<serde_json::Map<String, serde_json::Value>> {
+    Ok(latest_replaceable(relays, author_hex, crate::profile::KIND_METADATA)?
+        .map(|ev| crate::profile::parse_profile(&ev))
+        .unwrap_or_default())
+}
+
+/// Update the caller's profile: fetch the newest kind-0, merge `updates` into
+/// its raw JSON (unknown fields from other clients are preserved; empty values
+/// remove a key), sign, and publish. Succeeds if any relay accepts.
+pub fn set_profile(
+    relays: &[String],
+    sk: &[u8; 32],
+    updates: &[(&str, String)],
+) -> IoResult<()> {
+    let me = crate::event::pubkey_hex(sk).map_err(|e| e.to_string())?;
+    let current = latest_profile(relays, &me)?;
+    let content = crate::profile::merged_content(current, updates);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let ev = crate::event::sign_event(sk, now, crate::profile::KIND_METADATA, vec![], content)
+        .map_err(|e| e.to_string())?;
+    let results = publish(relays, &ev);
+    if results.iter().any(|(_, r)| r.is_ok()) {
+        Ok(())
+    } else {
+        Err("no relay accepted the profile".to_string())
+    }
+}
+
+/// The newest kind-0 for each of `authors`, merged across relays. Returns a
+/// map from pubkey hex to the profile's JSON map. Missing profiles are absent.
+pub fn fetch_profiles(
+    relays: &[String],
+    authors: Vec<String>,
+) -> IoResult<std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>> {
+    let limit = authors.len() as u32;
+    let filter = Filter {
+        authors: Some(authors),
+        kinds: Some(vec![crate::profile::KIND_METADATA]),
+        limit: Some(limit),
+    };
+    let events = fetch_all(relays, &filter)?;
+    let mut newest: std::collections::HashMap<String, Event> = std::collections::HashMap::new();
+    for ev in events {
+        match newest.get(&ev.pubkey) {
+            Some(cur) if cur.created_at >= ev.created_at => {}
+            _ => {
+                newest.insert(ev.pubkey.clone(), ev);
+            }
+        }
+    }
+    Ok(newest
+        .into_iter()
+        .map(|(pk, ev)| (pk, crate::profile::parse_profile(&ev)))
+        .collect())
 }
 
 /// Current follows for the holder of `sk` (their newest kind-3 across relays).

@@ -16,6 +16,7 @@ pub mod client;
 pub mod contacts;
 pub mod event;
 pub mod nip19;
+pub mod profile;
 pub mod relay;
 
 use thiserror::Error;

@@ -16,6 +16,8 @@ nostr follow   --identity NAME <npub|hex> [--name petname]
 nostr unfollow --identity NAME <npub|hex>
 nostr follows  --identity NAME              # who you follow
 nostr timeline --identity NAME [--limit N]  # notes from everyone you follow
+nostr profile  --identity NAME | --author <npub|hex>
+nostr set-profile --identity NAME [--name N] [--about A] [--picture URL] [--nip05 ID]
 ```
 
 ```sh
@@ -75,6 +77,19 @@ then publish the update — never a blind write.
 their recent notes, merged, deduplicated by event id, newest first, every
 signature verified. Petnames (from `--name`) label authors in the output.
 
+## Profiles (kind-0)
+
+A profile is a replaceable kind-0 event whose content is a JSON object
+(`name`, `about`, `picture`, `nip05`, …). Pictures are **URLs to ordinary web
+hosting** — only the metadata lives on relays. `nip05` is DNS-based
+verification: clients check `https://<domain>/.well-known/nostr.json`.
+
+`set-profile` edits are **merge-safe**: the newest kind-0 is fetched from all
+relays and only the flags you pass change — fields written by other clients
+(banner, lud16, website, …) are preserved verbatim; passing an empty string
+clears a field. The timeline labels authors by your petname first, then their
+profile `name`, then a pubkey prefix.
+
 ## Security notes
 
 - Notes are **public and permanent** — relays and mirrors keep them. There is
@@ -82,7 +97,7 @@ signature verified. Petnames (from `--name`) label authors in the output.
 - Posting reveals your pubkey and a timestamp. Timing correlation is a real
   metadata leak; content is signed but **not encrypted** (DMs are a different
   NIP, unimplemented).
-- v0.1: text notes + follows — no DMs or reactions yet.
+- v0.1: text notes, follows, profiles — no DMs or reactions yet.
 
 ## See also
 
