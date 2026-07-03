@@ -12,7 +12,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, send_dm, set_profile, suggest_follows};
+use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, run_signer, send_dm, set_profile, suggest_follows};
+use std::sync::atomic::AtomicBool;
 use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
@@ -127,6 +128,12 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Act as a NIP-46 remote signer (bunker). Prints a bunker:// URL to paste
+    /// into a Nostr client, then signs its requests. Ctrl-C to stop.
+    Bunker {
+        #[arg(long)]
+        identity: String,
+    },
     /// Print an identity's PRIVATE key as nsec (for logging into other Nostr
     /// clients). Anyone with this string controls the identity forever.
     ExportKey {
@@ -176,6 +183,7 @@ fn run() -> Result<()> {
         Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
         Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
         Cmd::Explore { identity, limit } => run_explore(identity, *limit, &relays),
+        Cmd::Bunker { identity } => run_bunker(identity, &relays),
         Cmd::ExportKey { identity, yes } => run_export_key(identity, *yes),
         Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
             identity,
@@ -241,6 +249,26 @@ fn run_export_key(identity: &str, yes: bool) -> Result<()> {
     // Only the nsec goes to stdout, so piping/redirecting captures just the key.
     println!("{}", &*nsec);
     Ok(())
+}
+
+fn run_bunker(identity: &str, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let signer_pk = pubkey_hex(&sk)?;
+    let relay = relays.first().cloned().unwrap_or_default();
+    let secret = bp_nostr::nip46::random_secret();
+    let url = bp_nostr::nip46::bunker_url(&signer_pk, &relay, &secret);
+
+    eprintln!("Signing as {identity:?} on {relay}");
+    eprintln!("Paste this into your Nostr client (keeps the key on this machine):");
+    println!("{url}");
+    eprintln!("Waiting for requests — Ctrl-C to stop.");
+
+    // No stop flag: the process runs until interrupted.
+    let never = AtomicBool::new(false);
+    run_signer(&relay, &sk, &secret, &never, |l| {
+        eprintln!("  {} {} → {}", l.client, l.method, l.outcome);
+    })
+    .map_err(|e| anyhow!(e))
 }
 
 fn run_explore(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
@@ -440,6 +468,7 @@ fn run_fetch(author: &str, limit: u32, relays: &[String]) -> Result<()> {
         authors: Some(vec![pubkey_to_hex(author)?]),
         kinds: Some(vec![KIND_TEXT_NOTE]),
         p_tags: None,
+        since: None,
         limit: Some(limit),
     };
     let (url, events, dropped) = fetch(relays, &filter).map_err(|e| anyhow!(e))?;

@@ -22,6 +22,7 @@ nostr dm      --identity NAME <npub|hex> "text"   # send an encrypted DM
 nostr dms     --identity NAME [--limit N]         # read your DMs
 nostr explore --identity NAME [--limit N]         # suggested accounts to follow
 nostr export-key --identity NAME --yes            # print the PRIVATE key (nsec)
+nostr bunker  --identity NAME                     # act as a NIP-46 remote signer
 ```
 
 ```sh
@@ -119,6 +120,33 @@ and roughly how long it was, are public relay data visible to anyone. It is
 implemented here because verification services and most clients still use it;
 NIP-17 gift-wrapped DMs (which hide metadata) can be added alongside later. Do
 not treat NIP-04 as private communication against a network observer.
+
+## Remote signing / bunker (NIP-46)
+
+Instead of pasting your nsec into a website, run backpack as a **remote signer**
+so the key never leaves the deck. `nostr bunker --identity NAME` (or the TUI
+NOSTR → SIGNER screen) prints a `bunker://` URL:
+
+```text
+bunker://<signer-pubkey>?relay=wss://…&secret=<random>
+```
+
+Paste that into a NIP-46-capable client (e.g. ditto.pub's "remote signer"
+login). The client sends signing requests to backpack over the relay; backpack
+signs with the keystore key and returns only the signature. The key stays on
+the deck.
+
+How it works: requests and responses are kind-24133 events, NIP-04-encrypted
+between the client's connection key and the signer. A client must `connect`
+with the URL's secret before any signing is honored (connect-then-sign); the
+`secret` in the URL is the authorization, so treat the URL like a password.
+Supported methods: connect, get_public_key, sign_event, nip04_encrypt/decrypt,
+ping. The signer runs while the SIGNER screen (or `bunker` command) is open and
+logs each request; closing it stops signing.
+
+Note: kind-24133 is an ephemeral event — relays forward it to the connected
+parties but do not store it, so both sides must be online at the same time
+(the client is, while you're logging in).
 
 ## Exporting your key (nsec) for other clients
 

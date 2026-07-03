@@ -13,6 +13,7 @@ mod theme;
 mod ui;
 
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
@@ -54,6 +55,9 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
         }
 
         if app.should_quit {
+            if let Some(mut s) = app.signer.take() {
+                s.stop();
+            }
             return Ok(());
         }
         if app.shell_requested {
@@ -68,9 +72,20 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
             continue;
         }
 
-        match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key.code),
-            _ => {}
+        // While the signer runs, poll so its live request log refreshes even
+        // without keypresses; otherwise block until the next key.
+        if app.signer.is_some() {
+            if event::poll(Duration::from_millis(300))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind == KeyEventKind::Press {
+                        app.on_key(key.code);
+                    }
+                }
+            }
+        } else if let Event::Key(key) = event::read()? {
+            if key.kind == KeyEventKind::Press {
+                app.on_key(key.code);
+            }
         }
         if let Some(text) = app.clipboard.take() {
             clipboard::copy(&text);

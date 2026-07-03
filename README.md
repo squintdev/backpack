@@ -166,6 +166,7 @@ nostr follow --identity alice npub1... --name fj
 nostr timeline --identity alice          # notes from everyone you follow
 nostr dms --identity alice               # read your encrypted DMs
 nostr explore --identity alice           # suggested accounts to follow
+nostr bunker --identity alice            # remote-signer (NIP-46) for web logins
 ```
 
 Every fetched event is signature-verified before display. Relays come from
