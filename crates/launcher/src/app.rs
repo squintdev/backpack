@@ -94,6 +94,8 @@ pub enum NostrMode {
     Timeline(Form),
     Follow(Form),
     FollowsForm(Form),
+    ProfileWho(Form),
+    ProfileEdit { identity: String, form: Form },
     /// Interactive follow list: j/k select, d unfollow (with confirm).
     Follows {
         identity: String,
@@ -125,6 +127,7 @@ pub const NOSTR_MENU: &[&str] = &[
     "FETCH     read one author",
     "FOLLOW    add an author",
     "FOLLOWS   manage my follows",
+    "PROFILE   view / edit my profile",
     "WHOAMI    show my npub",
 ];
 
@@ -192,6 +195,8 @@ pub enum Pending {
     NostrFollow { identity: String, author: String, name: Option<String> },
     NostrUnfollow { identity: String, author_hex: String },
     NostrFollows { identity: String },
+    NostrProfileLoad { identity: String },
+    NostrProfileSave { identity: String, updates: Vec<(String, String)> },
     VeilEncPass { input: String, output: String, pass: String },
     VeilEncRecipient { input: String, pub_path: String, output: String },
     VeilDecPass { input: String, output: String, pass: String },
@@ -490,6 +495,10 @@ impl App {
                                 "my follows",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
+                            5 => NostrMode::ProfileWho(Form::new(
+                                "my profile",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
                             _ => NostrMode::Whoami(Form::new(
                                 "whoami",
                                 vec![Field::new("identity").with_value(&first)],
@@ -594,6 +603,33 @@ impl App {
                         } else {
                             queue = Some(Pending::NostrFollows { identity });
                         }
+                    }
+                },
+                NostrMode::ProfileWho(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrProfileLoad { identity });
+                        }
+                    }
+                },
+                NostrMode::ProfileEdit { identity, form } => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let updates: Vec<(String, String)> = ["name", "about", "picture", "nip05"]
+                            .iter()
+                            .enumerate()
+                            .map(|(i, k)| (k.to_string(), form.value(i).to_string()))
+                            .collect();
+                        queue = Some(Pending::NostrProfileSave {
+                            identity: identity.clone(),
+                            updates,
+                        });
                     }
                 },
                 NostrMode::Follows { identity, entries, selected, confirm_unfollow } => {
@@ -1004,6 +1040,31 @@ impl App {
                     };
                 }
             }
+            Pending::NostrProfileLoad { identity } => {
+                let result = nostr_profile_form(session, &identity);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(form) => NostrMode::ProfileEdit { identity, form },
+                        Err(e) => NostrMode::Results {
+                            title: "profile".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        },
+                    };
+                }
+            }
+            Pending::NostrProfileSave { identity, updates } => {
+                let result = nostr_profile_save(session, &identity, &updates);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "profile".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
             Pending::VeilEncPass { input, output, pass } => {
                 let r = veil_run_enc_pass(&input, &output, &pass);
                 self.finish_veil(r);
@@ -1161,8 +1222,9 @@ fn nostr_timeline(session: &Session, identity: &str, limit: u32) -> Result<Vec<S
         ]);
     }
     let authors: Vec<String> = contacts.iter().map(|c| c.pubkey.clone()).collect();
-    let events =
-        bp_nostr::client::fetch_timeline(&relays, authors, limit).map_err(|e| anyhow!(e))?;
+    let events = bp_nostr::client::fetch_timeline(&relays, authors.clone(), limit)
+        .map_err(|e| anyhow!(e))?;
+    let profiles = bp_nostr::client::fetch_profiles(&relays, authors).unwrap_or_default();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
@@ -1172,6 +1234,11 @@ fn nostr_timeline(session: &Session, identity: &str, limit: u32) -> Result<Vec<S
             .iter()
             .find(|c| c.pubkey == ev.pubkey)
             .and_then(|c| c.petname.clone())
+            .or_else(|| {
+                profiles
+                    .get(&ev.pubkey)
+                    .and_then(|m| bp_nostr::profile::field(m, "name"))
+            })
             .unwrap_or_else(|| format!("{}…", &ev.pubkey[..12.min(ev.pubkey.len())]));
         lines.push(format!("── {who} · {}", age_label(now, ev.created_at)));
         for l in ev.content.lines() {
@@ -1217,6 +1284,42 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
     let relays = bp_nostr::client::resolve_relays(&[]);
     bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+/// Fetch the identity's current kind-0 and build a prefilled edit form.
+fn nostr_profile_form(session: &Session, identity: &str) -> Result<Form> {
+    let sk = session.nostr_key(identity)?;
+    let me = bp_nostr::event::pubkey_hex(&sk)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let map = bp_nostr::client::latest_profile(&relays, &me).map_err(|e| anyhow!(e))?;
+    let get = |k: &str| bp_nostr::profile::field(&map, k).unwrap_or_default();
+    Ok(Form::new(
+        "edit profile (empty clears a field)",
+        vec![
+            Field::new("name").with_value(get("name")),
+            Field::new("about").with_value(get("about")),
+            Field::new("picture (url)").with_value(get("picture")),
+            Field::new("nip05").with_value(get("nip05")),
+        ],
+    ))
+}
+
+fn nostr_profile_save(
+    session: &Session,
+    identity: &str,
+    updates: &[(String, String)],
+) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let borrowed: Vec<(&str, String)> = updates
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.clone()))
+        .collect();
+    bp_nostr::client::set_profile(&relays, &sk, &borrowed).map_err(|e| anyhow!(e))?;
+    Ok(vec![
+        "profile published".to_string(),
+        "fields set by other clients were preserved".to_string(),
+    ])
 }
 
 fn nostr_follow_entries(session: &Session, identity: &str) -> Result<Vec<FollowEntry>> {
@@ -1895,6 +1998,60 @@ mod tests {
         match &app.screen {
             Screen::Nostr(NostrMode::Results { scroll, .. }) => assert_eq!(*scroll, 0),
             _ => panic!("expected results"),
+        }
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn profile_flow_queues_load_then_save() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "hana");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+
+        // PROFILE -> identity form -> queues a load.
+        if let Gate::Open(_) = app.gate {
+            app.screen = Screen::Nostr(NostrMode::Menu(5));
+        }
+        app.on_key(KeyCode::Enter); // ProfileWho form
+        app.on_key(KeyCode::Enter); // identity prefilled -> submit
+        assert!(matches!(
+            app.pending.take(),
+            Some(Pending::NostrProfileLoad { .. })
+        ));
+
+        // Edit form (constructed directly; load is a network op) -> save
+        // carries all four fields, including cleared ones.
+        app.screen = Screen::Nostr(NostrMode::ProfileEdit {
+            identity: "hana".into(),
+            form: Form::new(
+                "edit profile (empty clears a field)",
+                vec![
+                    Field::new("name").with_value("old-name"),
+                    Field::new("about"),
+                    Field::new("picture (url)"),
+                    Field::new("nip05"),
+                ],
+            ),
+        });
+        type_str(&mut app, "!"); // append to prefilled name
+        app.on_key(KeyCode::Enter); // -> about
+        type_str(&mut app, "deck operator");
+        app.on_key(KeyCode::Enter); // -> picture
+        app.on_key(KeyCode::Enter); // -> nip05
+        app.on_key(KeyCode::Enter); // submit
+        match app.pending.take() {
+            Some(Pending::NostrProfileSave { updates, .. }) => {
+                assert_eq!(updates.len(), 4);
+                assert_eq!(updates[0], ("name".to_string(), "old-name!".to_string()));
+                assert_eq!(updates[1].1, "deck operator");
+                assert_eq!(updates[2].1, ""); // empty -> clears on merge
+            }
+            other => panic!("expected save, got {:?}", other.is_some()),
         }
         std::fs::remove_file(&store).ok();
     }

@@ -305,7 +305,9 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::Fetch(form)
         | NostrMode::Timeline(form)
         | NostrMode::Follow(form)
-        | NostrMode::FollowsForm(form) => render_form_page(f, area, form),
+        | NostrMode::FollowsForm(form)
+        | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
+        NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
         NostrMode::Follows { entries, selected, confirm_unfollow, .. } => {
             let items: Vec<ListItem> = entries
                 .iter()

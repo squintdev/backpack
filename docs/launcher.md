@@ -26,7 +26,7 @@ backpack
 | Screen | What it does |
 |--------|--------------|
 | IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `c` copies the npub to the clipboard; `n` adds a Nostr key to a pre-Nostr identity. |
-| NOSTR | TIMELINE (scrollable notes from everyone you follow, petname labels), POST (explicit *public + permanent* y/n confirm), FETCH (one author), FOLLOW/FOLLOWS (manage your relay-stored contact list; `d` unfollows with confirm, `c` copies an npub), WHOAMI (npub). Results scroll with `j/k`/PgUp/PgDn. |
+| NOSTR | TIMELINE (scrollable notes from everyone you follow, petname labels), POST (explicit *public + permanent* y/n confirm), FETCH (one author), FOLLOW/FOLLOWS (manage your relay-stored contact list; `d` unfollows with confirm, `c` copies an npub), PROFILE (view/edit your kind-0 — prefilled form, merge-safe publish), WHOAMI (npub). Results scroll with `j/k`/PgUp/PgDn. |
 | VEIL | Encrypt/decrypt with a passphrase or to/with an identity. Output names auto-derive; writes are atomic. |
 | SCRUB | Scan a file, show exactly what metadata would be removed, then write a `.clean.` copy on confirm. |
 | SPLIT | DEAL a secret file into k-of-n share files; COMBINE shares back (display or write to file). |

@@ -12,7 +12,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, fetch_timeline, publish, resolve_relays};
+use bp_nostr::client::{fetch, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, set_profile};
+use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
 use bp_nostr::nip19::{npub_encode, pubkey_to_hex};
@@ -96,6 +97,27 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         limit: u32,
     },
+    /// Show a profile: yours (--identity) or anyone's (--author).
+    Profile {
+        #[arg(long, conflicts_with = "author")]
+        identity: Option<String>,
+        #[arg(long)]
+        author: Option<String>,
+    },
+    /// Update your profile (kind-0). Only the flags you pass change; fields
+    /// set by other clients are preserved. Pass an empty string to clear.
+    SetProfile {
+        #[arg(long)]
+        identity: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        about: Option<String>,
+        #[arg(long)]
+        picture: Option<String>,
+        #[arg(long)]
+        nip05: Option<String>,
+    },
 }
 
 fn main() {
@@ -118,7 +140,62 @@ fn run() -> Result<()> {
         Cmd::Unfollow { identity, author } => run_unfollow(identity, author, &relays),
         Cmd::Follows { identity } => run_follows(identity, &relays),
         Cmd::Timeline { identity, limit } => run_timeline(identity, *limit, &relays),
+        Cmd::Profile { identity, author } => run_profile(identity.as_deref(), author.as_deref(), &relays),
+        Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
+            identity,
+            &[("name", name), ("about", about), ("picture", picture), ("nip05", nip05)],
+            &relays,
+        ),
     }
+}
+
+fn run_profile(identity: Option<&str>, author: Option<&str>, relays: &[String]) -> Result<()> {
+    let hex = match (identity, author) {
+        (_, Some(a)) => pubkey_to_hex(a)?,
+        (Some(id), None) => {
+            let sk = load_nostr_key(id)?;
+            pubkey_hex(&sk)?
+        }
+        (None, None) => bail!("pass --identity (your profile) or --author (someone else's)"),
+    };
+    let map = latest_profile(relays, &hex).map_err(|e| anyhow!(e))?;
+    let pk: [u8; 32] = hex::decode(&hex).unwrap().try_into().unwrap();
+    println!("{}", npub_encode(&pk));
+    if map.is_empty() {
+        println!("(no profile published)");
+        return Ok(());
+    }
+    for key in KNOWN_FIELDS {
+        if let Some(v) = field(&map, key) {
+            println!("{key:<8} {v}");
+        }
+    }
+    let extra: Vec<&String> = map
+        .keys()
+        .filter(|k| !KNOWN_FIELDS.contains(&k.as_str()))
+        .collect();
+    if !extra.is_empty() {
+        println!("(other fields preserved: {})", extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    Ok(())
+}
+
+fn run_set_profile(
+    identity: &str,
+    flags: &[(&str, &Option<String>)],
+    relays: &[String],
+) -> Result<()> {
+    let updates: Vec<(&str, String)> = flags
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| (*k, v.clone())))
+        .collect();
+    if updates.is_empty() {
+        bail!("nothing to change — pass --name/--about/--picture/--nip05");
+    }
+    let sk = load_nostr_key(identity)?;
+    set_profile(relays, &sk, &updates).map_err(|e| anyhow!(e))?;
+    println!("profile updated ({} field(s))", updates.len());
+    Ok(())
 }
 
 fn run_follow(
@@ -175,9 +252,10 @@ fn run_timeline(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
         return Ok(());
     }
     let authors: Vec<String> = contacts.iter().map(|c| c.pubkey.clone()).collect();
-    let events = fetch_timeline(relays, authors, limit).map_err(|e| anyhow!(e))?;
+    let events = fetch_timeline(relays, authors.clone(), limit).map_err(|e| anyhow!(e))?;
+    let profiles = fetch_profiles(relays, authors).unwrap_or_default();
     for ev in &events {
-        let who = label_for(&contacts, &ev.pubkey);
+        let who = label_for(&contacts, &profiles, &ev.pubkey);
         println!("── {who} @ {}", ev.created_at);
         for line in ev.content.lines() {
             println!("   {line}");
@@ -187,11 +265,16 @@ fn run_timeline(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn label_for(contacts: &[Contact], pubkey: &str) -> String {
+fn label_for(
+    contacts: &[Contact],
+    profiles: &std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>,
+    pubkey: &str,
+) -> String {
     contacts
         .iter()
         .find(|c| c.pubkey == pubkey)
         .and_then(|c| c.petname.clone())
+        .or_else(|| profiles.get(pubkey).and_then(|m| field(m, "name")))
         .unwrap_or_else(|| format!("{}…", &pubkey[..12.min(pubkey.len())]))
 }
 
