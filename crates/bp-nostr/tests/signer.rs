@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use bp_nostr::client::run_signer;
 use bp_nostr::event::{pubkey_hex, sign_event, verify_event, Event};
-use bp_nostr::nip04;
+use bp_nostr::nip44;
 use bp_nostr::nip46::{Response, KIND_RPC};
 use bp_nostr::relay::{parse, publish_frame, req_frame, Filter, RelayMsg};
 use tungstenite::stream::MaybeTlsStream as MaybeTls;
@@ -36,7 +36,7 @@ fn rpc(
 ) -> Response {
     let id = format!("{method}-{}", now());
     let body = serde_json::json!({ "id": id, "method": method, "params": params }).to_string();
-    let enc = nip04::encrypt(client_sk, signer_pub, &body).unwrap();
+    let enc = nip44::encrypt(client_sk, signer_pub, &body).unwrap();
     let ev = sign_event(
         client_sk,
         now(),
@@ -71,7 +71,7 @@ fn rpc(
         };
         if let Message::Text(t) = msg {
             if let RelayMsg::Event(e) = parse(&t) {
-                if let Ok(plain) = nip04::decrypt(client_sk, signer_pub, &e.content) {
+                if let Ok(plain) = nip44::decrypt(client_sk, signer_pub, &e.content) {
                     if plain.contains(&id) {
                         let v: serde_json::Value = serde_json::from_str(&plain).unwrap();
                         return Response {

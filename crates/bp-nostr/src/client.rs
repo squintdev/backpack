@@ -684,14 +684,23 @@ pub fn run_signer(
                 Some(k) => k,
                 None => continue,
             };
-        let Ok(plain) = crate::nip04::decrypt(signer_sk, &client_key, &ev.content) else {
-            on_log(SignerLog {
-                client: short_pk(&client),
-                method: "(unreadable)".into(),
-                outcome: "decrypt failed".into(),
-            });
-            continue;
-        };
+        // Modern clients use NIP-44; older ones NIP-04. Accept either and
+        // remember which, so the response uses the same scheme.
+        let (plain, use_nip44) =
+            match crate::nip44::decrypt(signer_sk, &client_key, &ev.content) {
+                Ok(p) => (p, true),
+                Err(_) => match crate::nip04::decrypt(signer_sk, &client_key, &ev.content) {
+                    Ok(p) => (p, false),
+                    Err(_) => {
+                        on_log(SignerLog {
+                            client: short_pk(&client),
+                            method: "(unreadable)".into(),
+                            outcome: "decrypt failed".into(),
+                        });
+                        continue;
+                    }
+                },
+            };
         let Ok(req) = Request::parse(&plain) else {
             continue;
         };
@@ -723,8 +732,13 @@ pub fn run_signer(
             },
         });
 
-        // Encrypt and publish the response back to the client.
-        if let Ok(enc) = crate::nip04::encrypt(signer_sk, &client_key, &response.to_json()) {
+        // Encrypt and publish the response back to the client, same scheme.
+        let sealed = if use_nip44 {
+            crate::nip44::encrypt(signer_sk, &client_key, &response.to_json())
+        } else {
+            crate::nip04::encrypt(signer_sk, &client_key, &response.to_json())
+        };
+        if let Ok(enc) = sealed {
             let ts = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())

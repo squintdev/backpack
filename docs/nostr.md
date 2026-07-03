@@ -136,8 +136,10 @@ login). The client sends signing requests to backpack over the relay; backpack
 signs with the keystore key and returns only the signature. The key stays on
 the deck.
 
-How it works: requests and responses are kind-24133 events, NIP-04-encrypted
-between the client's connection key and the signer. A client must `connect`
+How it works: requests and responses are kind-24133 events, encrypted between
+the client's connection key and the signer. Modern clients (ditto.pub) use
+**NIP-44 v2** (secp256k1 ECDH → HKDF → ChaCha20 + HMAC-SHA256); the signer also
+accepts legacy NIP-04 and replies in whichever scheme the client used. A client must `connect`
 with the URL's secret before any signing is honored (connect-then-sign); the
 `secret` in the URL is the authorization, so treat the URL like a password.
 Supported methods: connect, get_public_key, sign_event, nip04_encrypt/decrypt,
