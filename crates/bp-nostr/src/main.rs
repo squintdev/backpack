@@ -12,7 +12,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, publish, resolve_relays};
+use bp_nostr::client::{fetch, fetch_timeline, publish, resolve_relays};
+use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
 use bp_nostr::nip19::{npub_encode, pubkey_to_hex};
 use bp_nostr::relay::Filter;
@@ -67,6 +68,34 @@ enum Cmd {
         #[arg(long, default_value_t = 10)]
         limit: u32,
     },
+    /// Follow an author (updates your kind-3 contact list on the relays).
+    Follow {
+        #[arg(long)]
+        identity: String,
+        /// Who to follow (npub or hex).
+        author: String,
+        /// Optional petname shown in your timeline.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Unfollow an author.
+    Unfollow {
+        #[arg(long)]
+        identity: String,
+        author: String,
+    },
+    /// List who you follow.
+    Follows {
+        #[arg(long)]
+        identity: String,
+    },
+    /// Recent notes from everyone you follow, merged across relays.
+    Timeline {
+        #[arg(long)]
+        identity: String,
+        #[arg(long, default_value_t = 30)]
+        limit: u32,
+    },
 }
 
 fn main() {
@@ -83,7 +112,87 @@ fn run() -> Result<()> {
         Cmd::Whoami { identity } => whoami(identity),
         Cmd::Post { identity, text } => post(identity, text, &relays),
         Cmd::Fetch { author, limit } => run_fetch(author, *limit, &relays),
+        Cmd::Follow { identity, author, name } => {
+            run_follow(identity, author, name.clone(), &relays)
+        }
+        Cmd::Unfollow { identity, author } => run_unfollow(identity, author, &relays),
+        Cmd::Follows { identity } => run_follows(identity, &relays),
+        Cmd::Timeline { identity, limit } => run_timeline(identity, *limit, &relays),
     }
+}
+
+fn run_follow(
+    identity: &str,
+    author: &str,
+    name: Option<String>,
+    relays: &[String],
+) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let target = pubkey_to_hex(author)?;
+    let count = bp_nostr::client::follow(relays, &sk, &target, name).map_err(|e| anyhow!(e))?;
+    println!("following {count} author(s)");
+    Ok(())
+}
+
+fn run_unfollow(identity: &str, author: &str, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let target = pubkey_to_hex(author)?;
+    let (count, removed) =
+        bp_nostr::client::unfollow(relays, &sk, &target).map_err(|e| anyhow!(e))?;
+    if removed {
+        println!("unfollowed; following {count} author(s)");
+    } else {
+        println!("you weren't following that key");
+    }
+    Ok(())
+}
+
+fn run_follows(identity: &str, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let me = pubkey_hex(&sk)?;
+    let contacts = bp_nostr::client::follows(relays, &me).map_err(|e| anyhow!(e))?;
+    if contacts.is_empty() {
+        println!("(not following anyone yet — nostr follow --identity {identity} <npub>)");
+        return Ok(());
+    }
+    for c in &contacts {
+        let pk: [u8; 32] = hex::decode(&c.pubkey).unwrap().try_into().unwrap();
+        match &c.petname {
+            Some(name) => println!("{:<20} {}", name, npub_encode(&pk)),
+            None => println!("{:<20} {}", "-", npub_encode(&pk)),
+        }
+    }
+    eprintln!("({} follows)", contacts.len());
+    Ok(())
+}
+
+fn run_timeline(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let me = pubkey_hex(&sk)?;
+    let contacts = bp_nostr::client::follows(relays, &me).map_err(|e| anyhow!(e))?;
+    if contacts.is_empty() {
+        println!("(not following anyone yet — nostr follow --identity {identity} <npub>)");
+        return Ok(());
+    }
+    let authors: Vec<String> = contacts.iter().map(|c| c.pubkey.clone()).collect();
+    let events = fetch_timeline(relays, authors, limit).map_err(|e| anyhow!(e))?;
+    for ev in &events {
+        let who = label_for(&contacts, &ev.pubkey);
+        println!("── {who} @ {}", ev.created_at);
+        for line in ev.content.lines() {
+            println!("   {line}");
+        }
+    }
+    eprintln!("({} notes, {} follows, signatures verified)", events.len(), contacts.len());
+    Ok(())
+}
+
+fn label_for(contacts: &[Contact], pubkey: &str) -> String {
+    contacts
+        .iter()
+        .find(|c| c.pubkey == pubkey)
+        .and_then(|c| c.petname.clone())
+        .unwrap_or_else(|| format!("{}…", &pubkey[..12.min(pubkey.len())]))
 }
 
 fn whoami(identity: &str) -> Result<()> {

@@ -160,9 +160,10 @@ publishing — signed with a keyring identity's secp256k1 key (a third key each
 identity carries; older identities upgrade with `keyring nostr-init NAME`).
 
 ```sh
-nostr whoami --identity alice          # your npub
-nostr post --identity alice "hello"    # publish to relays
-nostr fetch --author npub1... --limit 5
+nostr whoami --identity alice            # your npub
+nostr post --identity alice "hello"      # publish to relays
+nostr follow --identity alice npub1... --name fj
+nostr timeline --identity alice          # notes from everyone you follow
 ```
 
 Every fetched event is signature-verified before display. Relays come from

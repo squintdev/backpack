@@ -186,6 +186,141 @@ pub fn fetch(relays: &[String], filter: &Filter) -> IoResult<(String, Vec<Event>
     Err(last)
 }
 
+/// Query **all** relays in parallel and merge the results, deduplicated by
+/// event id and sorted newest-first. Succeeds if any relay answered; errors
+/// only when every relay failed.
+pub fn fetch_all(relays: &[String], filter: &Filter) -> IoResult<Vec<Event>> {
+    let results: Vec<IoResult<(Vec<Event>, u32)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = relays
+            .iter()
+            .map(|url| scope.spawn(move || fetch_from(url, filter)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err("fetch thread panicked".into())))
+            .collect()
+    });
+
+    let mut ok = false;
+    let mut last_err = "no relays configured".to_string();
+    let mut seen = std::collections::HashSet::new();
+    let mut events = Vec::new();
+    for r in results {
+        match r {
+            Ok((evs, _dropped)) => {
+                ok = true;
+                for ev in evs {
+                    if seen.insert(ev.id.clone()) {
+                        events.push(ev);
+                    }
+                }
+            }
+            Err(e) => last_err = e,
+        }
+    }
+    if !ok {
+        return Err(last_err);
+    }
+    events.sort_by_key(|e| std::cmp::Reverse(e.created_at));
+    Ok(events)
+}
+
+/// The newest kind-3 contact list for `author_hex` across all relays, if any.
+///
+/// Contact lists are replaceable events; different relays may hold different
+/// versions, so every relay is asked and the freshest `created_at` wins.
+pub fn latest_contacts(relays: &[String], author_hex: &str) -> IoResult<Option<Event>> {
+    let filter = Filter {
+        authors: Some(vec![author_hex.to_string()]),
+        kinds: Some(vec![crate::contacts::KIND_CONTACTS]),
+        limit: Some(1),
+    };
+    let events = fetch_all(relays, &filter)?;
+    Ok(events.into_iter().max_by_key(|e| e.created_at))
+}
+
+/// Current follows for the holder of `sk` (their newest kind-3 across relays).
+pub fn follows(relays: &[String], author_hex: &str) -> IoResult<Vec<crate::contacts::Contact>> {
+    Ok(latest_contacts(relays, author_hex)?
+        .map(|ev| crate::contacts::parse_contacts(&ev))
+        .unwrap_or_default())
+}
+
+/// Follow `target_hex` (optionally with a petname): fetch the newest contact
+/// list, merge, sign a replacement kind-3, and publish it to every relay.
+/// Returns the new follow count. Succeeds if any relay accepts.
+pub fn follow(
+    relays: &[String],
+    sk: &[u8; 32],
+    target_hex: &str,
+    petname: Option<String>,
+) -> IoResult<usize> {
+    let me = crate::event::pubkey_hex(sk).map_err(|e| e.to_string())?;
+    let current = follows(relays, &me)?;
+    let updated = crate::contacts::with_contact(current, target_hex, petname);
+    publish_contacts(relays, sk, &updated)?;
+    Ok(updated.len())
+}
+
+/// Unfollow `target_hex`. Returns `(new count, was following)`; publishes only
+/// if something actually changed.
+pub fn unfollow(relays: &[String], sk: &[u8; 32], target_hex: &str) -> IoResult<(usize, bool)> {
+    let me = crate::event::pubkey_hex(sk).map_err(|e| e.to_string())?;
+    let current = follows(relays, &me)?;
+    let (updated, removed) = crate::contacts::without_contact(current, target_hex);
+    if removed {
+        publish_contacts(relays, sk, &updated)?;
+    }
+    Ok((updated.len(), removed))
+}
+
+/// Sign and publish a full replacement contact list.
+fn publish_contacts(
+    relays: &[String],
+    sk: &[u8; 32],
+    contacts: &[crate::contacts::Contact],
+) -> IoResult<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let ev = crate::event::sign_event(
+        sk,
+        now,
+        crate::contacts::KIND_CONTACTS,
+        crate::contacts::contact_tags(contacts),
+        String::new(),
+    )
+    .map_err(|e| e.to_string())?;
+    let results = publish(relays, &ev);
+    if results.iter().any(|(_, r)| r.is_ok()) {
+        Ok(())
+    } else {
+        let last = results
+            .into_iter()
+            .map(|(url, r)| format!("{url}: {}", r.unwrap_err()))
+            .next_back()
+            .unwrap_or_else(|| "no relays configured".to_string());
+        Err(format!("no relay accepted the contact list ({last})"))
+    }
+}
+
+/// Recent text notes from a set of authors, merged across all relays.
+pub fn fetch_timeline(
+    relays: &[String],
+    authors: Vec<String>,
+    limit: u32,
+) -> IoResult<Vec<Event>> {
+    let filter = Filter {
+        authors: Some(authors),
+        kinds: Some(vec![crate::event::KIND_TEXT_NOTE]),
+        limit: Some(limit),
+    };
+    let mut events = fetch_all(relays, &filter)?;
+    events.truncate(limit as usize);
+    Ok(events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

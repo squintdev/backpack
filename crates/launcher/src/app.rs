@@ -91,18 +91,41 @@ pub enum NostrMode {
     Post(Form),
     ConfirmPost { identity: String, text: String },
     Fetch(Form),
+    Timeline(Form),
+    Follow(Form),
+    FollowsForm(Form),
+    /// Interactive follow list: j/k select, d unfollow (with confirm).
+    Follows {
+        identity: String,
+        entries: Vec<FollowEntry>,
+        selected: usize,
+        confirm_unfollow: bool,
+    },
     Results {
         title: String,
         lines: Vec<String>,
         /// Payload staged to the clipboard when the user presses c.
         copy: Option<String>,
+        /// Vertical scroll offset (long timelines).
+        scroll: u16,
     },
 }
 
+/// One row in the FOLLOWS screen.
+#[derive(Clone)]
+pub struct FollowEntry {
+    pub label: String,
+    pub npub: String,
+    pub hex: String,
+}
+
 pub const NOSTR_MENU: &[&str] = &[
-    "WHOAMI  show my npub",
-    "POST    publish a note",
-    "FETCH   read an author",
+    "TIMELINE  notes from who I follow",
+    "POST      publish a note",
+    "FETCH     read one author",
+    "FOLLOW    add an author",
+    "FOLLOWS   manage my follows",
+    "WHOAMI    show my npub",
 ];
 
 pub enum VeilMode {
@@ -165,6 +188,10 @@ pub enum Screen {
 pub enum Pending {
     NostrPost { identity: String, text: String },
     NostrFetch { author: String, limit: u32 },
+    NostrTimeline { identity: String, limit: u32 },
+    NostrFollow { identity: String, author: String, name: Option<String> },
+    NostrUnfollow { identity: String, author_hex: String },
+    NostrFollows { identity: String },
     VeilEncPass { input: String, output: String, pass: String },
     VeilEncRecipient { input: String, pub_path: String, output: String },
     VeilDecPass { input: String, output: String, pass: String },
@@ -430,9 +457,12 @@ impl App {
                     }
                     KeyCode::Enter => {
                         *mode = match *sel {
-                            0 => NostrMode::Whoami(Form::new(
-                                "whoami",
-                                vec![Field::new("identity").with_value(&first)],
+                            0 => NostrMode::Timeline(Form::new(
+                                "timeline",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("limit").with_value("30"),
+                                ],
                             )),
                             1 => NostrMode::Post(Form::new(
                                 "post a note",
@@ -441,12 +471,28 @@ impl App {
                                     Field::new("text"),
                                 ],
                             )),
-                            _ => NostrMode::Fetch(Form::new(
+                            2 => NostrMode::Fetch(Form::new(
                                 "fetch notes",
                                 vec![
                                     Field::new("author (npub or hex)"),
                                     Field::new("limit").with_value("10"),
                                 ],
+                            )),
+                            3 => NostrMode::Follow(Form::new(
+                                "follow an author",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("author (npub or hex)"),
+                                    Field::new("petname (optional)"),
+                                ],
+                            )),
+                            4 => NostrMode::FollowsForm(Form::new(
+                                "my follows",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
+                            _ => NostrMode::Whoami(Form::new(
+                                "whoami",
+                                vec![Field::new("identity").with_value(&first)],
                             )),
                         };
                     }
@@ -464,6 +510,7 @@ impl App {
                                     title: format!("{name}'s nostr key"),
                                     lines,
                                     copy: npub,
+                                    scroll: 0,
                                 }
                             }
                             Err(e) => form.error = Some(format!("{e}")),
@@ -508,7 +555,94 @@ impl App {
                         }
                     }
                 },
-                NostrMode::Results { lines, copy, .. } => match code {
+                NostrMode::Timeline(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        let limit: u32 = form.value(1).parse().unwrap_or(30);
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrTimeline { identity, limit });
+                        }
+                    }
+                },
+                NostrMode::Follow(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(3),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        let author = form.value(1).to_string();
+                        let name = Some(form.value(2).to_string()).filter(|s| !s.is_empty());
+                        if author.is_empty() {
+                            form.error = Some("author is required".into());
+                        } else if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrFollow { identity, author, name });
+                        }
+                    }
+                },
+                NostrMode::FollowsForm(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(4),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrFollows { identity });
+                        }
+                    }
+                },
+                NostrMode::Follows { identity, entries, selected, confirm_unfollow } => {
+                    if *confirm_unfollow {
+                        match code {
+                            KeyCode::Char('y') => {
+                                if let Some(entry) = entries.get(*selected) {
+                                    queue = Some(Pending::NostrUnfollow {
+                                        identity: identity.clone(),
+                                        author_hex: entry.hex.clone(),
+                                    });
+                                }
+                                *confirm_unfollow = false;
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => *confirm_unfollow = false,
+                            _ => {}
+                        }
+                    } else {
+                        match code {
+                            KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(4),
+                            KeyCode::Char('j') | KeyCode::Down
+                                if *selected + 1 < entries.len() =>
+                            {
+                                *selected += 1;
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                *selected = selected.saturating_sub(1)
+                            }
+                            KeyCode::Char('c') => {
+                                if let Some(entry) = entries.get(*selected) {
+                                    queue_copy = Some(entry.npub.clone());
+                                }
+                            }
+                            KeyCode::Char('d') if !entries.is_empty() => {
+                                *confirm_unfollow = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                NostrMode::Results { lines, copy, scroll, .. } => match code {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        *scroll = scroll.saturating_add(1).min(lines.len() as u16)
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => *scroll = scroll.saturating_sub(1),
+                    KeyCode::PageDown => {
+                        *scroll = scroll.saturating_add(10).min(lines.len() as u16)
+                    }
+                    KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
                     KeyCode::Char('c') => {
                         if let Some(text) = copy.clone() {
                             queue_copy = Some(text);
@@ -795,7 +929,7 @@ impl App {
                         }
                         Err(e) => (vec![format!("failed: {e}")], None),
                     };
-                    *mode = NostrMode::Results { title: "post".into(), lines, copy };
+                    *mode = NostrMode::Results { title: "post".into(), lines, copy, scroll: 0 };
                 }
             }
             Pending::NostrFetch { author, limit } => {
@@ -805,6 +939,68 @@ impl App {
                         title: "fetch".into(),
                         lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
                         copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
+            Pending::NostrTimeline { identity, limit } => {
+                let result = nostr_timeline(session, &identity, limit);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "timeline".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
+            Pending::NostrFollow { identity, author, name } => {
+                let result = nostr_follow(session, &identity, &author, name);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "follow".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
+            Pending::NostrUnfollow { identity, author_hex } => {
+                let result = nostr_unfollow(session, &identity, &author_hex)
+                    .and_then(|_| nostr_follow_entries(session, &identity));
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(entries) => NostrMode::Follows {
+                            identity,
+                            selected: 0,
+                            entries,
+                            confirm_unfollow: false,
+                        },
+                        Err(e) => NostrMode::Results {
+                            title: "unfollow".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        },
+                    };
+                }
+            }
+            Pending::NostrFollows { identity } => {
+                let result = nostr_follow_entries(session, &identity);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(entries) => NostrMode::Follows {
+                            identity,
+                            selected: 0,
+                            entries,
+                            confirm_unfollow: false,
+                        },
+                        Err(e) => NostrMode::Results {
+                            title: "follows".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        },
                     };
                 }
             }
@@ -951,6 +1147,95 @@ fn nostr_fetch(author: &str, limit: u32) -> Result<Vec<String>> {
         }
     ));
     Ok(lines)
+}
+
+fn nostr_timeline(session: &Session, identity: &str, limit: u32) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let me = bp_nostr::event::pubkey_hex(&sk)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let contacts = bp_nostr::client::follows(&relays, &me).map_err(|e| anyhow!(e))?;
+    if contacts.is_empty() {
+        return Ok(vec![
+            "not following anyone yet".to_string(),
+            "add authors via FOLLOW".to_string(),
+        ]);
+    }
+    let authors: Vec<String> = contacts.iter().map(|c| c.pubkey.clone()).collect();
+    let events =
+        bp_nostr::client::fetch_timeline(&relays, authors, limit).map_err(|e| anyhow!(e))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let mut lines = Vec::new();
+    for ev in &events {
+        let who = contacts
+            .iter()
+            .find(|c| c.pubkey == ev.pubkey)
+            .and_then(|c| c.petname.clone())
+            .unwrap_or_else(|| format!("{}…", &ev.pubkey[..12.min(ev.pubkey.len())]));
+        lines.push(format!("── {who} · {}", age_label(now, ev.created_at)));
+        for l in ev.content.lines() {
+            lines.push(format!("   {l}"));
+        }
+        lines.push(String::new());
+    }
+    lines.push(format!(
+        "({} notes from {} follows, signatures verified — j/k to scroll)",
+        events.len(),
+        contacts.len()
+    ));
+    Ok(lines)
+}
+
+/// "3m" / "2h" / "5d" style relative age.
+fn age_label(now: u64, then: u64) -> String {
+    let secs = now.saturating_sub(then);
+    match secs {
+        0..=59 => format!("{secs}s"),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86399 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86400),
+    }
+}
+
+fn nostr_follow(
+    session: &Session,
+    identity: &str,
+    author: &str,
+    name: Option<String>,
+) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let target = bp_nostr::nip19::pubkey_to_hex(author)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let count =
+        bp_nostr::client::follow(&relays, &sk, &target, name).map_err(|e| anyhow!(e))?;
+    Ok(vec![format!("now following {count} author(s)")])
+}
+
+fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result<()> {
+    let sk = session.nostr_key(identity)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
+    Ok(())
+}
+
+fn nostr_follow_entries(session: &Session, identity: &str) -> Result<Vec<FollowEntry>> {
+    let sk = session.nostr_key(identity)?;
+    let me = bp_nostr::event::pubkey_hex(&sk)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let contacts = bp_nostr::client::follows(&relays, &me).map_err(|e| anyhow!(e))?;
+    Ok(contacts
+        .into_iter()
+        .map(|c| {
+            let pk: [u8; 32] = hex::decode(&c.pubkey).unwrap().try_into().unwrap();
+            let npub = bp_nostr::nip19::npub_encode(&pk);
+            FollowEntry {
+                label: c.petname.unwrap_or_else(|| format!("{}…", &npub[..16])),
+                npub,
+                hex: c.pubkey,
+            }
+        })
+        .collect())
 }
 
 fn veil_form(op: usize, first_identity: &str) -> Form {
@@ -1519,11 +1804,98 @@ mod tests {
         // c on the WHOAMI results stages the same npub.
         app.on_key(KeyCode::Char('2'));
         app.on_key(KeyCode::Enter); // NOSTR menu
+        app.on_key(KeyCode::Up); // wrap to WHOAMI (last entry)
         app.on_key(KeyCode::Enter); // WHOAMI form (identity prefilled)
         app.on_key(KeyCode::Enter); // submit
         assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Results { .. })));
         app.on_key(KeyCode::Char('c'));
         assert_eq!(app.clipboard.take().as_deref(), Some(staged.as_str()));
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn timeline_and_follow_queue_pendings() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "grace");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+
+        app.on_key(KeyCode::Char('2'));
+        app.on_key(KeyCode::Enter); // NOSTR menu, TIMELINE selected
+        app.on_key(KeyCode::Enter); // timeline form
+        app.on_key(KeyCode::Enter); // identity prefilled -> limit
+        app.on_key(KeyCode::Enter); // submit
+        assert!(matches!(
+            app.pending.take(),
+            Some(Pending::NostrTimeline { limit: 30, .. })
+        ));
+
+        // FOLLOW form validates author presence.
+        if let Screen::Nostr(mode) = &mut app.screen {
+            *mode = NostrMode::Menu(3);
+        }
+        app.on_key(KeyCode::Enter); // follow form
+        app.on_key(KeyCode::Enter); // identity -> author (empty)
+        app.on_key(KeyCode::Enter); // -> petname
+        app.on_key(KeyCode::Enter); // submit with empty author
+        match &app.screen {
+            Screen::Nostr(NostrMode::Follow(form)) => assert!(form.error.is_some()),
+            _ => panic!("expected follow form error"),
+        }
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn follows_list_unfollow_needs_confirm_and_results_scroll() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.screen = Screen::Nostr(NostrMode::Follows {
+            identity: "grace".into(),
+            entries: vec![FollowEntry {
+                label: "fj".into(),
+                npub: "npub1abc".into(),
+                hex: "ff".repeat(32),
+            }],
+            selected: 0,
+            confirm_unfollow: false,
+        });
+        app.on_key(KeyCode::Char('d')); // ask
+        app.on_key(KeyCode::Char('n')); // decline
+        assert!(app.pending.is_none());
+        app.on_key(KeyCode::Char('d'));
+        app.on_key(KeyCode::Char('y')); // confirm
+        assert!(matches!(
+            app.pending.take(),
+            Some(Pending::NostrUnfollow { .. })
+        ));
+
+        // Results scroll offset moves with j/k and clamps at zero.
+        app.screen = Screen::Nostr(NostrMode::Results {
+            title: "timeline".into(),
+            lines: (0..50).map(|i| format!("line {i}")).collect(),
+            copy: None,
+            scroll: 0,
+        });
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::PageDown);
+        match &app.screen {
+            Screen::Nostr(NostrMode::Results { scroll, .. }) => assert_eq!(*scroll, 12),
+            _ => panic!("expected results"),
+        }
+        app.on_key(KeyCode::PageUp);
+        app.on_key(KeyCode::Char('k'));
+        app.on_key(KeyCode::Char('k'));
+        app.on_key(KeyCode::Char('k'));
+        match &app.screen {
+            Screen::Nostr(NostrMode::Results { scroll, .. }) => assert_eq!(*scroll, 0),
+            _ => panic!("expected results"),
+        }
         std::fs::remove_file(&store).ok();
     }
 

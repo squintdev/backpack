@@ -9,9 +9,13 @@ runtime.
 ## Usage
 
 ```text
-nostr whoami --identity NAME              # your npub + hex pubkey
-nostr post   --identity NAME "text"       # sign + publish a text note
-nostr fetch  --author <npub|hex> [--limit N]
+nostr whoami   --identity NAME              # your npub + hex pubkey
+nostr post     --identity NAME "text"       # sign + publish a text note
+nostr fetch    --author <npub|hex> [--limit N]
+nostr follow   --identity NAME <npub|hex> [--name petname]
+nostr unfollow --identity NAME <npub|hex>
+nostr follows  --identity NAME              # who you follow
+nostr timeline --identity NAME [--limit N]  # notes from everyone you follow
 ```
 
 ```sh
@@ -59,6 +63,18 @@ The key never leaves the encrypted keystore; `post`/`whoami` unlock it with
   compiled-in webpki roots — works on a minimal deck image with no system CA
   store.
 
+## Follows and the timeline (NIP-02)
+
+Your follow list is a **kind-3 contact list stored on the relays**, not on
+disk — portable across devices, replaceable by design. Because publishing a
+kind-3 replaces the whole list, `follow`/`unfollow` always fetch the newest
+list from **all** relays first (freshest `created_at` wins), merge the change,
+then publish the update — never a blind write.
+
+`timeline` resolves your follows, then queries all relays in parallel for
+their recent notes, merged, deduplicated by event id, newest first, every
+signature verified. Petnames (from `--name`) label authors in the output.
+
 ## Security notes
 
 - Notes are **public and permanent** — relays and mirrors keep them. There is
@@ -66,7 +82,7 @@ The key never leaves the encrypted keystore; `post`/`whoami` unlock it with
 - Posting reveals your pubkey and a timestamp. Timing correlation is a real
   metadata leak; content is signed but **not encrypted** (DMs are a different
   NIP, unimplemented).
-- v0.1: text notes only — no follows, DMs, or reactions yet.
+- v0.1: text notes + follows — no DMs or reactions yet.
 
 ## See also
 
