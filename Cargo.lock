@@ -205,8 +205,11 @@ dependencies = [
 name = "bp-nostr"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "anyhow",
+ "base64",
  "bech32",
+ "cbc",
  "clap",
  "hex",
  "k256",
@@ -708,6 +711,7 @@ dependencies = [
  "ff",
  "generic-array",
  "group",
+ "hkdf",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",

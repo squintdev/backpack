@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, set_profile};
+use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, send_dm, set_profile};
 use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
@@ -104,6 +104,22 @@ enum Cmd {
         #[arg(long)]
         author: Option<String>,
     },
+    /// Send an encrypted direct message (NIP-04).
+    Dm {
+        #[arg(long)]
+        identity: String,
+        /// Recipient (npub or hex).
+        to: String,
+        /// Message text.
+        text: String,
+    },
+    /// Read your encrypted direct messages (both directions).
+    Dms {
+        #[arg(long)]
+        identity: String,
+        #[arg(long, default_value_t = 30)]
+        limit: u32,
+    },
     /// Update your profile (kind-0). Only the flags you pass change; fields
     /// set by other clients are preserved. Pass an empty string to clear.
     SetProfile {
@@ -141,12 +157,56 @@ fn run() -> Result<()> {
         Cmd::Follows { identity } => run_follows(identity, &relays),
         Cmd::Timeline { identity, limit } => run_timeline(identity, *limit, &relays),
         Cmd::Profile { identity, author } => run_profile(identity.as_deref(), author.as_deref(), &relays),
+        Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
+        Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
         Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
             identity,
             &[("name", name), ("about", about), ("picture", picture), ("nip05", nip05)],
             &relays,
         ),
     }
+}
+
+fn run_dm(identity: &str, to: &str, text: &str, relays: &[String]) -> Result<()> {
+    if text.trim().is_empty() {
+        bail!("refusing to send an empty message");
+    }
+    let sk = load_nostr_key(identity)?;
+    let recipient = pubkey_to_hex(to)?;
+    let results = send_dm(relays, &sk, &recipient, text).map_err(|e| anyhow!(e))?;
+    for (url, r) in results {
+        match r {
+            Ok(_) => println!("  {url}: accepted"),
+            Err(e) => eprintln!("  {url}: {e}"),
+        }
+    }
+    println!("note: NIP-04 hides the text but not who/when — metadata is public");
+    Ok(())
+}
+
+fn run_dms(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let dms = fetch_dms(relays, &sk, limit).map_err(|e| anyhow!(e))?;
+    if dms.is_empty() {
+        println!("(no direct messages found)");
+        return Ok(());
+    }
+    // Label partners by their profile names where available.
+    let partners: Vec<String> = dms.iter().map(|d| d.partner.clone()).collect();
+    let profiles = fetch_profiles(relays, partners).unwrap_or_default();
+    for dm in &dms {
+        let who = profiles
+            .get(&dm.partner)
+            .and_then(|m| field(m, "name"))
+            .unwrap_or_else(|| format!("{}…", &dm.partner[..12.min(dm.partner.len())]));
+        let arrow = if dm.outgoing { "→ to  " } else { "← from" };
+        println!("{arrow} {who} @ {}", dm.created_at);
+        for line in dm.text.lines() {
+            println!("   {line}");
+        }
+    }
+    eprintln!("({} messages, decrypted locally)", dms.len());
+    Ok(())
 }
 
 fn run_profile(identity: Option<&str>, author: Option<&str>, relays: &[String]) -> Result<()> {
@@ -319,6 +379,7 @@ fn run_fetch(author: &str, limit: u32, relays: &[String]) -> Result<()> {
     let filter = Filter {
         authors: Some(vec![pubkey_to_hex(author)?]),
         kinds: Some(vec![KIND_TEXT_NOTE]),
+        p_tags: None,
         limit: Some(limit),
     };
     let (url, events, dropped) = fetch(relays, &filter).map_err(|e| anyhow!(e))?;

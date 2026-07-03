@@ -47,8 +47,10 @@ serde_json = "1"
 directories = "5"
 hkdf = "0.12"
 ratatui = "0.29"
-k256 = { version = "0.13", features = ["schnorr"] }
+k256 = { version = "0.13", features = ["schnorr", "ecdh"] }
 tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 bech32 = "0.11"
 base64 = "0.22"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

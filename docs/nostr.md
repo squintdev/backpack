@@ -18,6 +18,8 @@ nostr follows  --identity NAME              # who you follow
 nostr timeline --identity NAME [--limit N]  # notes from everyone you follow
 nostr profile  --identity NAME | --author <npub|hex>
 nostr set-profile --identity NAME [--name N] [--about A] [--picture URL] [--nip05 ID]
+nostr dm      --identity NAME <npub|hex> "text"   # send an encrypted DM
+nostr dms     --identity NAME [--limit N]         # read your DMs
 ```
 
 ```sh
@@ -90,6 +92,19 @@ relays and only the flags you pass change — fields written by other clients
 clears a field. The timeline labels authors by your petname first, then their
 profile `name`, then a pubkey prefix.
 
+## Direct messages (NIP-04)
+
+`dm` sends an encrypted kind-4 message; `dms` fetches and decrypts your inbox
+(both directions), labeling partners by profile name. Encryption is ECDH over
+secp256k1 → AES-256-CBC, so only you and the other party can read the text.
+
+**NIP-04 leaks metadata by design and is deprecated upstream.** The *content*
+is private, but the fact that you and a given pubkey exchanged a message, when,
+and roughly how long it was, are public relay data visible to anyone. It is
+implemented here because verification services and most clients still use it;
+NIP-17 gift-wrapped DMs (which hide metadata) can be added alongside later. Do
+not treat NIP-04 as private communication against a network observer.
+
 ## Security notes
 
 - Notes are **public and permanent** — relays and mirrors keep them. There is
@@ -97,7 +112,7 @@ profile `name`, then a pubkey prefix.
 - Posting reveals your pubkey and a timestamp. Timing correlation is a real
   metadata leak; content is signed but **not encrypted** (DMs are a different
   NIP, unimplemented).
-- v0.1: text notes, follows, profiles — no DMs or reactions yet.
+- v0.1: text notes, follows, profiles, and NIP-04 direct messages — no reactions or NIP-17 private DMs yet.
 
 ## See also
 

@@ -121,6 +121,7 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
     match mode {
         NostrMode::Menu(_) => &[("↑↓/jk", "select"), ("enter", "open"), ("esc", "back")],
         NostrMode::ConfirmPost { .. } => &[("y", "publish"), ("n", "cancel")],
+        NostrMode::ConfirmDm { .. } => &[("y", "send"), ("n", "cancel")],
         NostrMode::Results { copy: Some(_), .. } => {
             &[("j/k", "scroll"), ("c", "copy"), ("enter/esc", "back")]
         }
@@ -308,6 +309,22 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::FollowsForm(form)
         | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
         NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
+        NostrMode::DmsWho(form) | NostrMode::SendDm(form) => render_form_page(f, area, form),
+        NostrMode::ConfirmDm { recipient_label, text, .. } => {
+            let lines = vec![
+                Line::from(Span::styled("encrypted DM (NIP-04)", bold(alert()))),
+                Line::from(Span::styled("text private · sender/recipient/time public", dim())),
+                Line::from(""),
+                Line::from(vec![Span::styled("to   ", dim()), Span::styled(recipient_label.clone(), accent())]),
+                Line::from(vec![Span::styled("msg  ", dim()), Span::styled(text.clone(), phosphor())]),
+                Line::from(""),
+                Line::from(Span::styled("y = send · n = cancel", dim())),
+            ];
+            f.render_widget(
+                Paragraph::new(lines).wrap(Wrap { trim: false }).block(titled_block(" ▞▞ CONFIRM ")),
+                area,
+            );
+        }
         NostrMode::Follows { entries, selected, confirm_unfollow, .. } => {
             let items: Vec<ListItem> = entries
                 .iter()

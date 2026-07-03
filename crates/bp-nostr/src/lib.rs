@@ -15,6 +15,7 @@
 pub mod client;
 pub mod contacts;
 pub mod event;
+pub mod nip04;
 pub mod nip19;
 pub mod profile;
 pub mod relay;
@@ -33,6 +34,10 @@ pub enum Error {
     Serialize,
     #[error("signature verification failed")]
     BadSignature,
+    #[error("malformed {0}")]
+    BadFormat(&'static str),
+    #[error("decryption failed (wrong key or corrupted message)")]
+    Decrypt,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
