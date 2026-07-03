@@ -30,7 +30,7 @@ type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 /// The NIP-04 shared key: x-coordinate of `sk * P(their_xonly)`.
 ///
 /// The x-only pubkey lifts to the even-Y point, per BIP340 convention.
-fn shared_x(sk: &[u8; 32], their_xonly: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
+pub(crate) fn shared_x(sk: &[u8; 32], their_xonly: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
     // Lift x-only key to a full point (0x02 prefix = even Y).
     let mut sec1 = [0u8; 33];
     sec1[0] = 0x02;

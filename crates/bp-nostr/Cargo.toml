@@ -24,6 +24,9 @@ bech32 = { workspace = true }
 base64 = { workspace = true }
 aes = { workspace = true }
 cbc = { workspace = true }
+chacha20 = { workspace = true }
+hmac = { workspace = true }
+hkdf = { workspace = true }
 tungstenite = { workspace = true }
 rustls = { workspace = true }
 rand_core = { workspace = true }
