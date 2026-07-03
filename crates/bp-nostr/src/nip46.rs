@@ -5,10 +5,11 @@
 //! only the result. The key never reaches the client.
 //!
 //! Transport (handled by the client layer) is kind-24133 events whose content
-//! is a NIP-04-encrypted JSON request/response between the client's connection
-//! key and the signer. This module is the pure, network-free core: the
-//! `bunker://` URL, request/response framing, and [`respond`] — which turns a
-//! decrypted request into a response using the signer's key.
+//! is an encrypted JSON request/response between the client's connection key
+//! and the signer — NIP-44 for modern clients, NIP-04 for legacy ones. This
+//! module is the pure, network-free core: the `bunker://` URL, request/response
+//! framing, and [`respond`] — which turns a decrypted request into a response
+//! using the signer's key.
 
 use rand_core::{OsRng, RngCore};
 use serde_json::{json, Value};
@@ -123,12 +124,18 @@ pub fn is_read_only(method: &str) -> bool {
 pub fn respond(signer_sk: &[u8; 32], req: &Request, expected_secret: &str) -> Response {
     match req.method.as_str() {
         "connect" => {
-            // params: [remote_signer_pubkey, optional secret]
-            let provided = req.param_str(1).unwrap_or_default();
-            if !expected_secret.is_empty() && provided != expected_secret {
-                Response::err(&req.id, "invalid secret")
-            } else {
+            // Clients place the secret inconsistently: some send
+            // [signer_pubkey, secret], others [secret] or add a permissions
+            // arg. Accept the connection if the expected secret appears in any
+            // param (or if no secret was configured).
+            let ok = expected_secret.is_empty()
+                || (0..req.params.len())
+                    .filter_map(|i| req.param_str(i))
+                    .any(|p| p == expected_secret);
+            if ok {
                 Response::ok(&req.id, "ack")
+            } else {
+                Response::err(&req.id, "invalid secret")
             }
         }
         "ping" => Response::ok(&req.id, "pong"),
@@ -154,6 +161,24 @@ pub fn respond(signer_sk: &[u8; 32], req: &Request, expected_secret: &str) -> Re
                 Err(e) => Response::err(&req.id, format!("{e}")),
             },
             _ => Response::err(&req.id, "nip04_decrypt needs [pubkey, ciphertext]"),
+        },
+        "nip44_encrypt" => match (req.param_str(0), req.param_str(1)) {
+            (Some(peer), Some(text)) => {
+                match peer_key(&peer).and_then(|pk| crate::nip44::encrypt(signer_sk, &pk, &text)) {
+                    Ok(ct) => Response::ok(&req.id, ct),
+                    Err(e) => Response::err(&req.id, format!("{e}")),
+                }
+            }
+            _ => Response::err(&req.id, "nip44_encrypt needs [pubkey, plaintext]"),
+        },
+        "nip44_decrypt" => match (req.param_str(0), req.param_str(1)) {
+            (Some(peer), Some(ct)) => {
+                match peer_key(&peer).and_then(|pk| crate::nip44::decrypt(signer_sk, &pk, &ct)) {
+                    Ok(pt) => Response::ok(&req.id, pt),
+                    Err(e) => Response::err(&req.id, format!("{e}")),
+                }
+            }
+            _ => Response::err(&req.id, "nip44_decrypt needs [pubkey, ciphertext]"),
         },
         other => Response::err(&req.id, format!("unsupported method: {other}")),
     }
@@ -241,9 +266,17 @@ mod tests {
     }
 
     #[test]
-    fn connect_checks_secret() {
-        let good = Request::parse(r#"{"id":"3","method":"connect","params":["x","open"]}"#).unwrap();
-        assert!(respond(&SK, &good, "open").error.is_none());
+    fn connect_accepts_secret_in_any_position() {
+        // [pubkey, secret]
+        let a = Request::parse(r#"{"id":"3","method":"connect","params":["x","open"]}"#).unwrap();
+        assert!(respond(&SK, &a, "open").error.is_none());
+        // [secret] only
+        let b = Request::parse(r#"{"id":"3b","method":"connect","params":["open"]}"#).unwrap();
+        assert!(respond(&SK, &b, "open").error.is_none());
+        // [pubkey, secret, permissions]
+        let c = Request::parse(r#"{"id":"3c","method":"connect","params":["x","open","sign_event:1"]}"#).unwrap();
+        assert!(respond(&SK, &c, "open").error.is_none());
+        // wrong secret anywhere -> rejected
         let bad = Request::parse(r#"{"id":"4","method":"connect","params":["x","wrong"]}"#).unwrap();
         assert!(respond(&SK, &bad, "open").error.is_some());
     }
@@ -263,6 +296,23 @@ mod tests {
         assert_eq!(ev.content, "signed remotely");
         assert_eq!(ev.pubkey, pubkey_hex(&SK).unwrap());
         verify_event(&ev).unwrap();
+    }
+
+    #[test]
+    fn nip44_encrypt_decrypt_roundtrip() {
+        let peer_sk = [21u8; 32];
+        let peer_pub = pubkey_hex(&peer_sk).unwrap();
+        let enc = Request::parse(&format!(
+            r#"{{"id":"e","method":"nip44_encrypt","params":["{peer_pub}","hello dm"]}}"#
+        ))
+        .unwrap();
+        let ct = respond(&SK, &enc, "").result;
+        assert!(!ct.is_empty());
+        // The peer decrypts what the signer encrypted to them.
+        let signer_pub = pubkey_hex(&SK).unwrap();
+        let signer_pub_bytes: [u8; 32] = hex::decode(&signer_pub).unwrap().try_into().unwrap();
+        let pt = crate::nip44::decrypt(&peer_sk, &signer_pub_bytes, &ct).unwrap();
+        assert_eq!(pt, "hello dm");
     }
 
     #[test]
