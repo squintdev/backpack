@@ -67,6 +67,7 @@ pub fn render(f: &mut Frame, app: &App) {
                         ("e", "export"),
                         ("c", "copy npub"),
                         ("n", "nostr key"),
+                        ("x", "reveal nsec"),
                         ("d", "delete"),
                         ("esc", "back"),
                     ],
@@ -296,6 +297,43 @@ fn render_identities(
         IdMode::ConfirmDelete => {
             let name = ids.get(st.selected).map(|i| i.name.clone()).unwrap_or_default();
             render_confirm(f, &format!("Delete {name}?  (y/n)"));
+        }
+        IdMode::RevealConfirm => {
+            let area = centered(64, 6, f.area());
+            f.render_widget(Clear, area);
+            let lines = vec![
+                Line::from(Span::styled("Reveal the PRIVATE key (nsec)?", bold(alert()))),
+                Line::from(Span::styled(
+                    "Anyone who gets it controls this identity forever.",
+                    dim(),
+                )),
+                Line::from(Span::styled("There is no reset on Nostr.", dim())),
+                Line::from(""),
+                Line::from(Span::styled("y = reveal   ·   n = cancel", phosphor())),
+            ];
+            f.render_widget(
+                Paragraph::new(lines)
+                    .alignment(Alignment::Center)
+                    .block(titled_block(" ▞▞ SECRET KEY ").border_style(alert())),
+                area,
+            );
+        }
+        IdMode::Reveal { nsec } => {
+            let area = centered(72, 6, f.area());
+            f.render_widget(Clear, area);
+            let lines = vec![
+                Line::from(Span::styled("private key — treat like a master password:", dim())),
+                Line::from(""),
+                Line::from(Span::styled(nsec.clone(), bold(alert()))),
+                Line::from(""),
+                Line::from(Span::styled("c = copy   ·   esc = hide", dim())),
+            ];
+            f.render_widget(
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: false })
+                    .block(titled_block(" ▞▞ SECRET KEY ").border_style(alert())),
+                area,
+            );
         }
         IdMode::List => {}
     }

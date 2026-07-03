@@ -1,6 +1,7 @@
-//! NIP-19 bech32 encoding for public keys (`npub`).
+//! NIP-19 bech32 encoding for keys: public (`npub`) and secret (`nsec`).
 
 use bech32::{Bech32, Hrp};
+use zeroize::Zeroizing;
 
 use crate::{Error, Result};
 
@@ -8,6 +9,25 @@ use crate::{Error, Result};
 pub fn npub_encode(pubkey: &[u8; 32]) -> String {
     let hrp = Hrp::parse("npub").expect("static hrp");
     bech32::encode::<Bech32>(hrp, pubkey).expect("32 bytes always encode")
+}
+
+/// Encode a 32-byte secret key as an `nsec1…` string.
+///
+/// This is the private key in bech32 form — anyone who has it controls the
+/// identity forever. The returned string zeroizes on drop.
+pub fn nsec_encode(secret: &[u8; 32]) -> Zeroizing<String> {
+    let hrp = Hrp::parse("nsec").expect("static hrp");
+    Zeroizing::new(bech32::encode::<Bech32>(hrp, secret).expect("32 bytes always encode"))
+}
+
+/// Decode an `nsec1…` string to the 32-byte secret key (zeroized on drop).
+pub fn nsec_decode(s: &str) -> Result<Zeroizing<[u8; 32]>> {
+    let (hrp, data) = bech32::decode(s.trim()).map_err(|_| Error::BadNpub("not bech32"))?;
+    if hrp.as_str() != "nsec" {
+        return Err(Error::BadNpub("wrong prefix (expected nsec)"));
+    }
+    let bytes: [u8; 32] = data.try_into().map_err(|_| Error::BadNpub("wrong length"))?;
+    Ok(Zeroizing::new(bytes))
 }
 
 /// Decode an `npub1…` string to the 32-byte public key.
@@ -51,6 +71,17 @@ mod tests {
     fn roundtrip_random() {
         let pk = [0xABu8; 32];
         assert_eq!(npub_decode(&npub_encode(&pk)).unwrap(), pk);
+    }
+
+    #[test]
+    fn nsec_roundtrip_and_prefix_guard() {
+        let sk = [0x11u8; 32];
+        let nsec = nsec_encode(&sk);
+        assert!(nsec.starts_with("nsec1"));
+        assert_eq!(*nsec_decode(&nsec).unwrap(), sk);
+        // An npub must not decode as an nsec (and vice-versa).
+        assert!(nsec_decode(NPUB).is_err());
+        assert!(npub_decode(&nsec).is_err());
     }
 
     #[test]

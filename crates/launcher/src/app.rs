@@ -77,6 +77,10 @@ pub enum IdMode {
     List,
     New(Form),
     ConfirmDelete,
+    /// Confirming a private-key reveal.
+    RevealConfirm,
+    /// Showing the nsec (private key) — c copies, Esc clears.
+    Reveal { nsec: String },
 }
 
 pub struct IdentitiesState {
@@ -418,6 +422,9 @@ impl App {
                     KeyCode::Char('d') if !session.identities().is_empty() => {
                         st.mode = IdMode::ConfirmDelete;
                     }
+                    KeyCode::Char('x') if !session.identities().is_empty() => {
+                        st.mode = IdMode::RevealConfirm;
+                    }
                     _ => {}
                 },
                 IdMode::New(form) => match form.on_key(code) {
@@ -438,6 +445,37 @@ impl App {
                             Err(e) => form.error = Some(format!("{e}")),
                         }
                     }
+                },
+                IdMode::RevealConfirm => match code {
+                    KeyCode::Char('y') => {
+                        let name = session
+                            .identities()
+                            .get(st.selected)
+                            .map(|i| i.name.clone());
+                        st.mode = match name.as_deref().map(|n| session.nostr_key(n)) {
+                            Some(Ok(sk)) => IdMode::Reveal {
+                                nsec: bp_nostr::nip19::nsec_encode(&sk).to_string(),
+                            },
+                            Some(Err(e)) => {
+                                st.status = format!("{e}");
+                                IdMode::List
+                            }
+                            None => IdMode::List,
+                        };
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => st.mode = IdMode::List,
+                    _ => {}
+                },
+                IdMode::Reveal { nsec } => match code {
+                    KeyCode::Char('c') => {
+                        queue_copy = Some(nsec.clone());
+                        st.status = "nsec copied ✓ — paste only where you trust".to_string();
+                    }
+                    KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+                        st.status.clear();
+                        st.mode = IdMode::List;
+                    }
+                    _ => {}
                 },
                 IdMode::ConfirmDelete => match code {
                     KeyCode::Char('y') => {
@@ -2407,6 +2445,45 @@ mod tests {
         assert!(matches!(
             app.pending.take(),
             Some(Pending::NostrExploreFollow { .. })
+        ));
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn reveal_nsec_needs_confirm_and_stages_copy() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "leo");
+        app.on_key(KeyCode::Enter);
+
+        app.on_key(KeyCode::Char('x')); // ask
+        assert!(matches!(
+            &app.screen,
+            Screen::Identities(IdentitiesState { mode: IdMode::RevealConfirm, .. })
+        ));
+        app.on_key(KeyCode::Char('n')); // decline -> no reveal
+        assert!(matches!(
+            &app.screen,
+            Screen::Identities(IdentitiesState { mode: IdMode::List, .. })
+        ));
+
+        app.on_key(KeyCode::Char('x'));
+        app.on_key(KeyCode::Char('y')); // confirm -> reveal
+        match &app.screen {
+            Screen::Identities(IdentitiesState { mode: IdMode::Reveal { nsec }, .. }) => {
+                assert!(nsec.starts_with("nsec1"));
+            }
+            _ => panic!("expected reveal"),
+        }
+        app.on_key(KeyCode::Char('c')); // copy the nsec
+        assert!(app.clipboard.take().is_some_and(|c| c.starts_with("nsec1")));
+        app.on_key(KeyCode::Esc); // hide
+        assert!(matches!(
+            &app.screen,
+            Screen::Identities(IdentitiesState { mode: IdMode::List, .. })
         ));
         std::fs::remove_file(&store).ok();
     }

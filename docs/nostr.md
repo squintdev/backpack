@@ -21,6 +21,7 @@ nostr set-profile --identity NAME [--name N] [--about A] [--picture URL] [--nip0
 nostr dm      --identity NAME <npub|hex> "text"   # send an encrypted DM
 nostr dms     --identity NAME [--limit N]         # read your DMs
 nostr explore --identity NAME [--limit N]         # suggested accounts to follow
+nostr export-key --identity NAME --yes            # print the PRIVATE key (nsec)
 ```
 
 ```sh
@@ -118,6 +119,19 @@ and roughly how long it was, are public relay data visible to anyone. It is
 implemented here because verification services and most clients still use it;
 NIP-17 gift-wrapped DMs (which hide metadata) can be added alongside later. Do
 not treat NIP-04 as private communication against a network observer.
+
+## Exporting your key (nsec) for other clients
+
+Some Nostr clients (and web logins) ask for your `nsec` — the bech32 form of
+your **private** key. `export-key --identity NAME --yes` prints it (the
+`--yes` is a required acknowledgement; the warning goes to stderr and only the
+nsec to stdout). In the TUI, IDENTITIES → `x` reveals it behind a confirm, with
+`c` to copy.
+
+Treat the nsec like a master password. On Nostr there is **no key rotation and
+no reset**: anyone who obtains it controls the identity permanently. Pasting an
+nsec directly into a website is the least-safe login — prefer a NIP-07 browser
+extension or a NIP-46 remote signer, which sign without exposing the key.
 
 ## Security notes
 
