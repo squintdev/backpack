@@ -16,7 +16,7 @@ use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_
 use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
-use bp_nostr::nip19::{npub_encode, pubkey_to_hex};
+use bp_nostr::nip19::{npub_encode, nsec_encode, pubkey_to_hex};
 use bp_nostr::relay::Filter;
 
 /// Keystore passphrase environment variable (shared across the suite).
@@ -127,6 +127,15 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Print an identity's PRIVATE key as nsec (for logging into other Nostr
+    /// clients). Anyone with this string controls the identity forever.
+    ExportKey {
+        #[arg(long)]
+        identity: String,
+        /// Required acknowledgement that this reveals the private key.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Update your profile (kind-0). Only the flags you pass change; fields
     /// set by other clients are preserved. Pass an empty string to clear.
     SetProfile {
@@ -167,6 +176,7 @@ fn run() -> Result<()> {
         Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
         Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
         Cmd::Explore { identity, limit } => run_explore(identity, *limit, &relays),
+        Cmd::ExportKey { identity, yes } => run_export_key(identity, *yes),
         Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
             identity,
             &[("name", name), ("about", about), ("picture", picture), ("nip05", nip05)],
@@ -214,6 +224,22 @@ fn run_dms(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
         }
     }
     eprintln!("({} messages, decrypted locally)", dms.len());
+    Ok(())
+}
+
+fn run_export_key(identity: &str, yes: bool) -> Result<()> {
+    if !yes {
+        bail!(
+            "this prints the PRIVATE key (nsec) for {identity:?}. \
+             Anyone who gets it controls the identity forever — there is no reset. \
+             Re-run with --yes if you understand and still want to reveal it."
+        );
+    }
+    let sk = load_nostr_key(identity)?;
+    let nsec = nsec_encode(&sk);
+    eprintln!("SECRET KEY for {identity:?} — do not share; treat like a master password:");
+    // Only the nsec goes to stdout, so piping/redirecting captures just the key.
+    println!("{}", &*nsec);
     Ok(())
 }
 
