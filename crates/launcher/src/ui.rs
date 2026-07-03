@@ -121,8 +121,14 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
     match mode {
         NostrMode::Menu(_) => &[("↑↓/jk", "select"), ("enter", "open"), ("esc", "back")],
         NostrMode::ConfirmPost { .. } => &[("y", "publish"), ("n", "cancel")],
-        NostrMode::Results { copy: Some(_), .. } => &[("c", "copy"), ("enter/esc", "back")],
-        NostrMode::Results { .. } => &[("enter/esc", "back")],
+        NostrMode::Results { copy: Some(_), .. } => {
+            &[("j/k", "scroll"), ("c", "copy"), ("enter/esc", "back")]
+        }
+        NostrMode::Results { .. } => &[("j/k", "scroll"), ("enter/esc", "back")],
+        NostrMode::Follows { confirm_unfollow: true, .. } => &[("y", "unfollow"), ("n", "cancel")],
+        NostrMode::Follows { .. } => {
+            &[("j/k", "select"), ("c", "copy npub"), ("d", "unfollow"), ("esc", "back")]
+        }
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
 }
@@ -294,8 +300,48 @@ fn render_identities(
 fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
     match mode {
         NostrMode::Menu(sel) => render_submenu(f, area, " ▞▞ NOSTR ", NOSTR_MENU, *sel),
-        NostrMode::Whoami(form) | NostrMode::Post(form) | NostrMode::Fetch(form) => {
-            render_form_page(f, area, form)
+        NostrMode::Whoami(form)
+        | NostrMode::Post(form)
+        | NostrMode::Fetch(form)
+        | NostrMode::Timeline(form)
+        | NostrMode::Follow(form)
+        | NostrMode::FollowsForm(form) => render_form_page(f, area, form),
+        NostrMode::Follows { entries, selected, confirm_unfollow, .. } => {
+            let items: Vec<ListItem> = entries
+                .iter()
+                .map(|e| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{:<18}", truncate(&e.label, 18)), bold(accent())),
+                        Span::styled(e.npub.clone(), dim()),
+                    ]))
+                })
+                .collect();
+            let block = titled_block(&format!(" ▞▞ FOLLOWS ({}) ", entries.len()));
+            if items.is_empty() {
+                f.render_widget(
+                    Paragraph::new("not following anyone yet\n\nadd authors via FOLLOW")
+                        .alignment(Alignment::Center)
+                        .style(dim())
+                        .block(block),
+                    area,
+                );
+            } else {
+                let list = List::default()
+                    .items(items)
+                    .block(block)
+                    .highlight_style(selected_style())
+                    .highlight_symbol("▶");
+                let mut state = ListState::default();
+                state.select(Some((*selected).min(entries.len().saturating_sub(1))));
+                f.render_stateful_widget(list, area, &mut state);
+            }
+            if *confirm_unfollow {
+                let name = entries
+                    .get(*selected)
+                    .map(|e| e.label.clone())
+                    .unwrap_or_default();
+                render_confirm(f, &format!("Unfollow {name}?  (y/n)"));
+            }
         }
         NostrMode::ConfirmPost { identity, text } => {
             let lines = vec![
@@ -313,7 +359,9 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
                 area,
             );
         }
-        NostrMode::Results { title, lines, .. } => render_lines(f, area, title, lines),
+        NostrMode::Results { title, lines, scroll, .. } => {
+            render_lines_scrolled(f, area, title, lines, *scroll)
+        }
     }
 }
 
@@ -426,6 +474,20 @@ fn render_confirm(f: &mut Frame, msg: &str) {
         .alignment(Alignment::Center)
         .block(titled_block(" confirm "));
     f.render_widget(p, area);
+}
+
+fn render_lines_scrolled(f: &mut Frame, area: Rect, title: &str, lines: &[String], scroll: u16) {
+    let text: Vec<Line> = lines
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), phosphor())))
+        .collect();
+    f.render_widget(
+        Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0))
+            .block(titled_block(&format!(" ▞▞ {title} "))),
+        area,
+    );
 }
 
 fn render_lines(f: &mut Frame, area: Rect, title: &str, lines: &[String]) {

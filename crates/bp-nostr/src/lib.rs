@@ -7,11 +7,13 @@
 //! * [`nip19`] — bech32 `npub` encoding/decoding of public keys.
 //! * [`relay`] — the client-side JSON frames (`EVENT`, `REQ`, `CLOSE`) and
 //!   parsing of relay responses.
+//! * [`contacts`] — NIP-02 kind-3 contact lists (follows, petnames).
 //!
 //! Identity keys come from the suite's `keyring` (each identity carries a
 //! secp256k1 key alongside its Ed25519/X25519 pair).
 
 pub mod client;
+pub mod contacts;
 pub mod event;
 pub mod nip19;
 pub mod relay;
