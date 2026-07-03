@@ -130,6 +130,9 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
         NostrMode::Follows { .. } => {
             &[("j/k", "select"), ("c", "copy npub"), ("d", "unfollow"), ("esc", "back")]
         }
+        NostrMode::Explore { .. } => {
+            &[("j/k", "select"), ("f", "follow"), ("c", "copy npub"), ("esc", "back")]
+        }
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
 }
@@ -309,6 +312,10 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::FollowsForm(form)
         | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
         NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
+        NostrMode::ExploreWho(form) => render_form_page(f, area, form),
+        NostrMode::Explore { entries, selected, status, .. } => {
+            render_explore(f, area, entries, *selected, status)
+        }
         NostrMode::DmsWho(form) | NostrMode::SendDm(form) => render_form_page(f, area, form),
         NostrMode::ConfirmDm { recipient_label, text, .. } => {
             let lines = vec![
@@ -382,6 +389,71 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
             render_lines_scrolled(f, area, title, lines, *scroll)
         }
     }
+}
+
+fn render_explore(
+    f: &mut Frame,
+    area: Rect,
+    entries: &[crate::app::SuggestEntry],
+    selected: usize,
+    status: &str,
+) {
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(30), Constraint::Min(30)])
+        .split(area);
+
+    let items: Vec<ListItem> = entries
+        .iter()
+        .map(|e| {
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("{:>2} ", e.score), dim()),
+                Span::styled(truncate(&e.label, 22), bold(accent())),
+            ]))
+        })
+        .collect();
+    let block = titled_block(&format!(" ▞▞ EXPLORE ({}) ", entries.len()));
+    if items.is_empty() {
+        f.render_widget(
+            Paragraph::new("no suggestions found")
+                .alignment(Alignment::Center)
+                .style(dim())
+                .block(block),
+            cols[0],
+        );
+    } else {
+        let list = List::default()
+            .items(items)
+            .block(block)
+            .highlight_style(selected_style())
+            .highlight_symbol("▶");
+        let mut state = ListState::default();
+        state.select(Some(selected.min(entries.len().saturating_sub(1))));
+        f.render_stateful_widget(list, cols[0], &mut state);
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(e) = entries.get(selected) {
+        lines.push(Line::from(Span::styled(e.label.clone(), bold(accent()))));
+        lines.push(Line::from(Span::styled(
+            format!("followed by {} of your seeds", e.score),
+            dim(),
+        )));
+        lines.push(Line::from(""));
+        for l in e.about.lines() {
+            lines.push(Line::from(Span::styled(l.to_string(), phosphor())));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(e.npub.clone(), dim())));
+    }
+    if !status.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(status.to_string(), alert())));
+    }
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).block(titled_block(" ▞▞ PROFILE ")),
+        cols[1],
+    );
 }
 
 fn render_veil(f: &mut Frame, area: Rect, mode: &VeilMode) {

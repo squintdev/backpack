@@ -165,6 +165,7 @@ nostr post --identity alice "hello"      # publish to relays
 nostr follow --identity alice npub1... --name fj
 nostr timeline --identity alice          # notes from everyone you follow
 nostr dms --identity alice               # read your encrypted DMs
+nostr explore --identity alice           # suggested accounts to follow
 ```
 
 Every fetched event is signature-verified before display. Relays come from

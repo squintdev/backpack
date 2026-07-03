@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, send_dm, set_profile};
+use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, send_dm, set_profile, suggest_follows};
 use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
@@ -120,6 +120,13 @@ enum Cmd {
         #[arg(long, default_value_t = 30)]
         limit: u32,
     },
+    /// Suggest accounts to follow (from who you and others follow).
+    Explore {
+        #[arg(long)]
+        identity: String,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
     /// Update your profile (kind-0). Only the flags you pass change; fields
     /// set by other clients are preserved. Pass an empty string to clear.
     SetProfile {
@@ -159,6 +166,7 @@ fn run() -> Result<()> {
         Cmd::Profile { identity, author } => run_profile(identity.as_deref(), author.as_deref(), &relays),
         Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
         Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
+        Cmd::Explore { identity, limit } => run_explore(identity, *limit, &relays),
         Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
             identity,
             &[("name", name), ("about", about), ("picture", picture), ("nip05", nip05)],
@@ -206,6 +214,32 @@ fn run_dms(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
         }
     }
     eprintln!("({} messages, decrypted locally)", dms.len());
+    Ok(())
+}
+
+fn run_explore(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let me = pubkey_hex(&sk)?;
+    let my_follows: Vec<String> = bp_nostr::client::follows(relays, &me)
+        .map_err(|e| anyhow!(e))?
+        .into_iter()
+        .map(|c| c.pubkey)
+        .collect();
+    let suggestions = suggest_follows(relays, &my_follows, &me, limit).map_err(|e| anyhow!(e))?;
+    if suggestions.is_empty() {
+        println!("(no suggestions found)");
+        return Ok(());
+    }
+    for s in &suggestions {
+        let pk: [u8; 32] = hex::decode(&s.pubkey).unwrap().try_into().unwrap();
+        let name = s.name.clone().unwrap_or_else(|| format!("{}…", &s.pubkey[..12]));
+        println!("[{:>2}] {:<24} {}", s.score, name, npub_encode(&pk));
+        if let Some(about) = &s.about {
+            let short: String = about.chars().take(70).collect();
+            println!("     {short}");
+        }
+    }
+    eprintln!("({} suggestions — nostr follow --identity {identity} <npub>)", suggestions.len());
     Ok(())
 }
 
