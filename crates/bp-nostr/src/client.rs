@@ -237,6 +237,7 @@ pub fn latest_replaceable(
     let filter = Filter {
         authors: Some(vec![author_hex.to_string()]),
         kinds: Some(vec![kind]),
+        p_tags: None,
         limit: Some(1),
     };
     let events = fetch_all(relays, &filter)?;
@@ -293,6 +294,7 @@ pub fn fetch_profiles(
     let filter = Filter {
         authors: Some(authors),
         kinds: Some(vec![crate::profile::KIND_METADATA]),
+        p_tags: None,
         limit: Some(limit),
     };
     let events = fetch_all(relays, &filter)?;
@@ -377,6 +379,105 @@ fn publish_contacts(
     }
 }
 
+/// A decrypted direct-message view: the conversation partner and direction.
+pub struct Dm {
+    /// The other party's pubkey hex.
+    pub partner: String,
+    /// True if we sent it.
+    pub outgoing: bool,
+    pub created_at: u64,
+    /// Decrypted text, or an explanatory placeholder if decryption failed.
+    pub text: String,
+}
+
+/// Fetch and decrypt kind-4 DMs involving the caller, both directions,
+/// merged across relays, newest first.
+pub fn fetch_dms(relays: &[String], sk: &[u8; 32], limit: u32) -> IoResult<Vec<Dm>> {
+    let me = crate::event::pubkey_hex(sk).map_err(|e| e.to_string())?;
+
+    let received = Filter {
+        authors: None,
+        kinds: Some(vec![crate::nip04::KIND_DM]),
+        p_tags: Some(vec![me.clone()]),
+        limit: Some(limit),
+    };
+    let sent = Filter {
+        authors: Some(vec![me.clone()]),
+        kinds: Some(vec![crate::nip04::KIND_DM]),
+        p_tags: None,
+        limit: Some(limit),
+    };
+
+    let mut events = fetch_all(relays, &received)?;
+    if let Ok(out) = fetch_all(relays, &sent) {
+        let mut seen: std::collections::HashSet<String> =
+            events.iter().map(|e| e.id.clone()).collect();
+        for ev in out {
+            if seen.insert(ev.id.clone()) {
+                events.push(ev);
+            }
+        }
+    }
+    events.sort_by_key(|e| std::cmp::Reverse(e.created_at));
+    events.truncate(limit as usize);
+
+    let mut dms = Vec::new();
+    for ev in events {
+        let outgoing = ev.pubkey == me;
+        let partner_hex = if outgoing {
+            // Recipient is the first p tag.
+            match ev.tags.iter().find(|t| t.len() >= 2 && t[0] == "p") {
+                Some(t) => t[1].to_ascii_lowercase(),
+                None => continue,
+            }
+        } else {
+            ev.pubkey.clone()
+        };
+        let Ok(partner_key): Result<[u8; 32], _> =
+            hex::decode(&partner_hex).map(|v| v.try_into().unwrap_or([0u8; 32]))
+        else {
+            continue;
+        };
+        let text = crate::nip04::decrypt(sk, &partner_key, &ev.content)
+            .unwrap_or_else(|_| "(could not decrypt)".to_string());
+        dms.push(Dm { partner: partner_hex, outgoing, created_at: ev.created_at, text });
+    }
+    Ok(dms)
+}
+
+/// Encrypt, sign, and publish a NIP-04 DM to `recipient_hex`. Succeeds if any
+/// relay accepts; returns the per-relay results.
+pub fn send_dm(
+    relays: &[String],
+    sk: &[u8; 32],
+    recipient_hex: &str,
+    text: &str,
+) -> IoResult<Vec<(String, IoResult<String>)>> {
+    let recipient: [u8; 32] = hex::decode(recipient_hex)
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(|| "bad recipient pubkey".to_string())?;
+    let content = crate::nip04::encrypt(sk, &recipient, text).map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let ev = crate::event::sign_event(
+        sk,
+        now,
+        crate::nip04::KIND_DM,
+        vec![vec!["p".to_string(), recipient_hex.to_string()]],
+        content,
+    )
+    .map_err(|e| e.to_string())?;
+    let results = publish(relays, &ev);
+    if results.iter().any(|(_, r)| r.is_ok()) {
+        Ok(results)
+    } else {
+        Err("no relay accepted the message".to_string())
+    }
+}
+
 /// Recent text notes from a set of authors, merged across all relays.
 pub fn fetch_timeline(
     relays: &[String],
@@ -386,6 +487,7 @@ pub fn fetch_timeline(
     let filter = Filter {
         authors: Some(authors),
         kinds: Some(vec![crate::event::KIND_TEXT_NOTE]),
+        p_tags: None,
         limit: Some(limit),
     };
     let mut events = fetch_all(relays, &filter)?;

@@ -96,6 +96,9 @@ pub enum NostrMode {
     FollowsForm(Form),
     ProfileWho(Form),
     ProfileEdit { identity: String, form: Form },
+    DmsWho(Form),
+    SendDm(Form),
+    ConfirmDm { identity: String, recipient_hex: String, recipient_label: String, text: String },
     /// Interactive follow list: j/k select, d unfollow (with confirm).
     Follows {
         identity: String,
@@ -127,6 +130,8 @@ pub const NOSTR_MENU: &[&str] = &[
     "FETCH     read one author",
     "FOLLOW    add an author",
     "FOLLOWS   manage my follows",
+    "MESSAGES  read my DMs",
+    "SEND DM   encrypted message",
     "PROFILE   view / edit my profile",
     "WHOAMI    show my npub",
 ];
@@ -197,6 +202,8 @@ pub enum Pending {
     NostrFollows { identity: String },
     NostrProfileLoad { identity: String },
     NostrProfileSave { identity: String, updates: Vec<(String, String)> },
+    NostrDmsLoad { identity: String },
+    NostrDmSend { identity: String, recipient_hex: String, text: String },
     VeilEncPass { input: String, output: String, pass: String },
     VeilEncRecipient { input: String, pub_path: String, output: String },
     VeilDecPass { input: String, output: String, pass: String },
@@ -495,7 +502,19 @@ impl App {
                                 "my follows",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
-                            5 => NostrMode::ProfileWho(Form::new(
+                            5 => NostrMode::DmsWho(Form::new(
+                                "read messages",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
+                            6 => NostrMode::SendDm(Form::new(
+                                "send encrypted DM",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("to (npub or hex)"),
+                                    Field::new("message"),
+                                ],
+                            )),
+                            7 => NostrMode::ProfileWho(Form::new(
                                 "my profile",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
@@ -604,6 +623,55 @@ impl App {
                             queue = Some(Pending::NostrFollows { identity });
                         }
                     }
+                },
+                NostrMode::DmsWho(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrDmsLoad { identity });
+                        }
+                    }
+                },
+                NostrMode::SendDm(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(6),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        let to = form.value(1).to_string();
+                        let text = form.value(2).to_string();
+                        if to.is_empty() || text.is_empty() {
+                            form.error = Some("recipient and message are required".into());
+                        } else if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            match bp_nostr::nip19::pubkey_to_hex(&to) {
+                                Ok(hex) => {
+                                    *mode = NostrMode::ConfirmDm {
+                                        identity,
+                                        recipient_label: to.clone(),
+                                        recipient_hex: hex,
+                                        text,
+                                    };
+                                }
+                                Err(e) => form.error = Some(format!("{e}")),
+                            }
+                        }
+                    }
+                },
+                NostrMode::ConfirmDm { identity, recipient_hex, text, .. } => match code {
+                    KeyCode::Char('y') => {
+                        queue = Some(Pending::NostrDmSend {
+                            identity: identity.clone(),
+                            recipient_hex: recipient_hex.clone(),
+                            text: text.clone(),
+                        });
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => *mode = NostrMode::Menu(6),
+                    _ => {}
                 },
                 NostrMode::ProfileWho(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = NostrMode::Menu(5),
@@ -1065,6 +1133,28 @@ impl App {
                     };
                 }
             }
+            Pending::NostrDmsLoad { identity } => {
+                let result = nostr_dms(session, &identity);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "messages".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
+            Pending::NostrDmSend { identity, recipient_hex, text } => {
+                let result = nostr_dm_send(session, &identity, &recipient_hex, &text);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "send dm".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
+                    };
+                }
+            }
             Pending::VeilEncPass { input, output, pass } => {
                 let r = veil_run_enc_pass(&input, &output, &pass);
                 self.finish_veil(r);
@@ -1183,6 +1273,7 @@ fn nostr_fetch(author: &str, limit: u32) -> Result<Vec<String>> {
     let filter = bp_nostr::relay::Filter {
         authors: Some(vec![author_hex]),
         kinds: Some(vec![bp_nostr::event::KIND_TEXT_NOTE]),
+        p_tags: None,
         limit: Some(limit),
     };
     let relays = bp_nostr::client::resolve_relays(&[]);
@@ -1284,6 +1375,52 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
     let relays = bp_nostr::client::resolve_relays(&[]);
     bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+fn nostr_dms(session: &Session, identity: &str) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let dms = bp_nostr::client::fetch_dms(&relays, &sk, 40).map_err(|e| anyhow!(e))?;
+    if dms.is_empty() {
+        return Ok(vec!["(no direct messages found)".to_string()]);
+    }
+    let partners: Vec<String> = dms.iter().map(|d| d.partner.clone()).collect();
+    let profiles = bp_nostr::client::fetch_profiles(&relays, partners).unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    let mut lines = Vec::new();
+    for dm in &dms {
+        let who = profiles
+            .get(&dm.partner)
+            .and_then(|m| bp_nostr::profile::field(m, "name"))
+            .unwrap_or_else(|| format!("{}…", &dm.partner[..12.min(dm.partner.len())]));
+        let arrow = if dm.outgoing { "→ to" } else { "← from" };
+        lines.push(format!("{arrow} {who} · {}", age_label(now, dm.created_at)));
+        for l in dm.text.lines() {
+            lines.push(format!("   {l}"));
+        }
+        lines.push(String::new());
+    }
+    lines.push(format!("({} messages, decrypted locally — j/k to scroll)", dms.len()));
+    Ok(lines)
+}
+
+fn nostr_dm_send(
+    session: &Session,
+    identity: &str,
+    recipient_hex: &str,
+    text: &str,
+) -> Result<Vec<String>> {
+    let sk = session.nostr_key(identity)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let results =
+        bp_nostr::client::send_dm(&relays, &sk, recipient_hex, text).map_err(|e| anyhow!(e))?;
+    let accepted = results.iter().filter(|(_, r)| r.is_ok()).count();
+    Ok(vec![
+        format!("sent to {accepted}/{} relay(s)", results.len()),
+        "encrypted (NIP-04) — text is private, metadata is not".to_string(),
+    ])
 }
 
 /// Fetch the identity's current kind-0 and build a prefilled edit form.
@@ -2015,7 +2152,7 @@ mod tests {
 
         // PROFILE -> identity form -> queues a load.
         if let Gate::Open(_) = app.gate {
-            app.screen = Screen::Nostr(NostrMode::Menu(5));
+            app.screen = Screen::Nostr(NostrMode::Menu(7));
         }
         app.on_key(KeyCode::Enter); // ProfileWho form
         app.on_key(KeyCode::Enter); // identity prefilled -> submit
@@ -2052,6 +2189,63 @@ mod tests {
                 assert_eq!(updates[2].1, ""); // empty -> clears on merge
             }
             other => panic!("expected save, got {:?}", other.is_some()),
+        }
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn send_dm_requires_confirmation() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "ivy");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+
+        // SEND DM at menu index 6.
+        if let Gate::Open(_) = app.gate {
+            app.screen = Screen::Nostr(NostrMode::Menu(6));
+        }
+        app.on_key(KeyCode::Enter); // SendDm form
+        app.on_key(KeyCode::Enter); // identity prefilled -> to
+        let npub = {
+            let s = app.session().unwrap();
+            nostr_whoami(s, "ivy").unwrap()[0].clone()
+        };
+        type_str(&mut app, &npub);
+        app.on_key(KeyCode::Enter); // -> message
+        type_str(&mut app, "hi self");
+        app.on_key(KeyCode::Enter); // submit -> confirm
+        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::ConfirmDm { .. })));
+        assert!(app.pending.is_none());
+        app.on_key(KeyCode::Char('n')); // decline
+        assert!(app.pending.is_none());
+        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Menu(_))));
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn send_dm_rejects_empty_recipient() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "jack");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+        if let Gate::Open(_) = app.gate {
+            app.screen = Screen::Nostr(NostrMode::Menu(6));
+        }
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // identity -> to (empty)
+        app.on_key(KeyCode::Enter); // -> message (empty)
+        app.on_key(KeyCode::Enter); // submit
+        match &app.screen {
+            Screen::Nostr(NostrMode::SendDm(form)) => assert!(form.error.is_some()),
+            _ => panic!("expected send-dm form error"),
         }
         std::fs::remove_file(&store).ok();
     }

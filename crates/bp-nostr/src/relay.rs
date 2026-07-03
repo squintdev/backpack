@@ -16,6 +16,9 @@ pub struct Filter {
     pub authors: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kinds: Option<Vec<u32>>,
+    /// Events with a `p` tag naming these pubkeys (DM recipients, mentions).
+    #[serde(rename = "#p", skip_serializing_if = "Option::is_none")]
+    pub p_tags: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
@@ -90,6 +93,7 @@ mod tests {
         let f = Filter {
             authors: Some(vec!["ab".into()]),
             kinds: Some(vec![1]),
+            p_tags: None,
             limit: Some(10),
         };
         let rf = req_frame("sub1", &f);

@@ -21,6 +21,9 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 k256 = { workspace = true }
 bech32 = { workspace = true }
+base64 = { workspace = true }
+aes = { workspace = true }
+cbc = { workspace = true }
 tungstenite = { workspace = true }
 rustls = { workspace = true }
 rand_core = { workspace = true }
