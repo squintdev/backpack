@@ -17,6 +17,7 @@ pub mod contacts;
 pub mod event;
 pub mod nip04;
 pub mod nip19;
+pub mod nip46;
 pub mod profile;
 pub mod relay;
 

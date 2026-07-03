@@ -70,6 +70,10 @@ fn host_port(url: &str) -> IoResult<(String, u16)> {
 /// Connect with a bounded TCP connect and bounded reads, so one dead or
 /// blackholed relay can never stall the caller for minutes.
 fn connect(url: &str) -> IoResult<Socket> {
+    connect_with_timeout(url, READ_TIMEOUT)
+}
+
+fn connect_with_timeout(url: &str, read_timeout: Duration) -> IoResult<Socket> {
     let (host, port) = host_port(url)?;
     let addr = (host.as_str(), port)
         .to_socket_addrs()
@@ -79,7 +83,7 @@ fn connect(url: &str) -> IoResult<Socket> {
     let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
         .map_err(|e| format!("connecting to {url}: {e}"))?;
     stream
-        .set_read_timeout(Some(READ_TIMEOUT))
+        .set_read_timeout(Some(read_timeout))
         .and_then(|_| stream.set_write_timeout(Some(READ_TIMEOUT)))
         .map_err(|e| format!("setting timeouts: {e}"))?;
     let (socket, _resp) =
@@ -238,6 +242,7 @@ pub fn latest_replaceable(
         authors: Some(vec![author_hex.to_string()]),
         kinds: Some(vec![kind]),
         p_tags: None,
+        since: None,
         limit: Some(1),
     };
     let events = fetch_all(relays, &filter)?;
@@ -295,6 +300,7 @@ pub fn fetch_profiles(
         authors: Some(authors),
         kinds: Some(vec![crate::profile::KIND_METADATA]),
         p_tags: None,
+        since: None,
         limit: Some(limit),
     };
     let events = fetch_all(relays, &filter)?;
@@ -363,6 +369,7 @@ pub fn suggest_follows(
         authors: Some(seeds.clone()),
         kinds: Some(vec![crate::contacts::KIND_CONTACTS]),
         p_tags: None,
+        since: None,
         limit: Some(seeds.len() as u32),
     };
     let events = fetch_all(relays, &filter)?;
@@ -497,12 +504,14 @@ pub fn fetch_dms(relays: &[String], sk: &[u8; 32], limit: u32) -> IoResult<Vec<D
         authors: None,
         kinds: Some(vec![crate::nip04::KIND_DM]),
         p_tags: Some(vec![me.clone()]),
+        since: None,
         limit: Some(limit),
     };
     let sent = Filter {
         authors: Some(vec![me.clone()]),
         kinds: Some(vec![crate::nip04::KIND_DM]),
         p_tags: None,
+        since: None,
         limit: Some(limit),
     };
 
@@ -586,11 +595,157 @@ pub fn fetch_timeline(
         authors: Some(authors),
         kinds: Some(vec![crate::event::KIND_TEXT_NOTE]),
         p_tags: None,
+        since: None,
         limit: Some(limit),
     };
     let mut events = fetch_all(relays, &filter)?;
     events.truncate(limit as usize);
     Ok(events)
+}
+
+// ---------------------------------------------------------------- NIP-46 signer
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// A log line emitted by the running signer.
+pub struct SignerLog {
+    pub client: String,
+    pub method: String,
+    pub outcome: String,
+}
+
+/// Run a NIP-46 signer loop on one relay until `stop` is set.
+///
+/// Subscribes for requests addressed to the signer, decrypts each, enforces
+/// connect-before-sign (a client must `connect` with the correct secret before
+/// any signing/decryption is honored), signs with `signer_sk`, and publishes
+/// the encrypted response. `on_log` is called for each handled request.
+///
+/// Blocking: the caller runs it on a dedicated thread (TUI) or the main thread
+/// (CLI). Reads are short so `stop` is observed within ~2s.
+pub fn run_signer(
+    relay: &str,
+    signer_sk: &[u8; 32],
+    secret: &str,
+    stop: &AtomicBool,
+    mut on_log: impl FnMut(SignerLog),
+) -> IoResult<()> {
+    use crate::nip46::{is_read_only, respond, Request, KIND_RPC};
+
+    let signer_pk = crate::event::pubkey_hex(signer_sk).map_err(|e| e.to_string())?;
+    let mut socket = connect_with_timeout(relay, Duration::from_secs(2))?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+    let filter = Filter {
+        authors: None,
+        kinds: Some(vec![KIND_RPC]),
+        p_tags: Some(vec![signer_pk.clone()]),
+        since: Some(now),
+        limit: None,
+    };
+    socket
+        .send(Message::Text(req_frame("bpsigner", &filter)))
+        .map_err(|e| format!("subscribe: {e}"))?;
+
+    let mut authorized: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    while !stop.load(Ordering::Relaxed) {
+        let msg = match socket.read() {
+            Ok(m) => m,
+            Err(tungstenite::Error::Io(e))
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                continue; // read timed out; re-check stop flag
+            }
+            Err(e) => return Err(format!("read: {e}")),
+        };
+        let text = match msg {
+            Message::Text(t) => t,
+            Message::Ping(_) | Message::Pong(_) => continue,
+            Message::Close(_) => return Err("relay closed the signer subscription".into()),
+            _ => continue,
+        };
+        let RelayMsg::Event(ev) = parse(&text) else {
+            continue;
+        };
+        if ev.kind != KIND_RPC || verify_event(&ev).is_err() {
+            continue;
+        }
+
+        let client = ev.pubkey.clone();
+        let client_key: [u8; 32] =
+            match hex::decode(&client).ok().and_then(|v| v.try_into().ok()) {
+                Some(k) => k,
+                None => continue,
+            };
+        let Ok(plain) = crate::nip04::decrypt(signer_sk, &client_key, &ev.content) else {
+            on_log(SignerLog {
+                client: short_pk(&client),
+                method: "(unreadable)".into(),
+                outcome: "decrypt failed".into(),
+            });
+            continue;
+        };
+        let Ok(req) = Request::parse(&plain) else {
+            continue;
+        };
+
+        // Policy: connect (with secret) authorizes a client; read-only methods
+        // are always allowed; signing/decryption require prior authorization.
+        let response = if req.method == "connect" {
+            let r = respond(signer_sk, &req, secret);
+            if r.error.is_none() {
+                authorized.insert(client.clone());
+            }
+            r
+        } else if is_read_only(&req.method) || authorized.contains(&client) {
+            respond(signer_sk, &req, secret)
+        } else {
+            crate::nip46::Response {
+                id: req.id.clone(),
+                result: String::new(),
+                error: Some("not connected".into()),
+            }
+        };
+
+        on_log(SignerLog {
+            client: short_pk(&client),
+            method: req.method.clone(),
+            outcome: match &response.error {
+                Some(e) => format!("error: {e}"),
+                None => "ok".into(),
+            },
+        });
+
+        // Encrypt and publish the response back to the client.
+        if let Ok(enc) = crate::nip04::encrypt(signer_sk, &client_key, &response.to_json()) {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(now);
+            if let Ok(resp_ev) = crate::event::sign_event(
+                signer_sk,
+                ts,
+                KIND_RPC,
+                vec![vec!["p".to_string(), client.clone()]],
+                enc,
+            ) {
+                let _ = socket.send(Message::Text(publish_frame(&resp_ev)));
+            }
+        }
+    }
+    let _ = socket.close(None);
+    Ok(())
+}
+
+fn short_pk(hex: &str) -> String {
+    format!("{}…", &hex[..12.min(hex.len())])
 }
 
 #[cfg(test)]

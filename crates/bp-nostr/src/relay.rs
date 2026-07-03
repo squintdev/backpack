@@ -19,6 +19,9 @@ pub struct Filter {
     /// Events with a `p` tag naming these pubkeys (DM recipients, mentions).
     #[serde(rename = "#p", skip_serializing_if = "Option::is_none")]
     pub p_tags: Option<Vec<String>>,
+    /// Only events at or after this unix time (live subscriptions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
@@ -94,6 +97,7 @@ mod tests {
             authors: Some(vec!["ab".into()]),
             kinds: Some(vec![1]),
             p_tags: None,
+            since: None,
             limit: Some(10),
         };
         let rf = req_frame("sub1", &f);

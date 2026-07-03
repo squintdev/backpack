@@ -5,6 +5,9 @@
 //! No terminal I/O here — everything is unit-testable.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use anyhow::{anyhow, bail, Result};
 use ratatui::crossterm::event::KeyCode;
@@ -100,6 +103,8 @@ pub enum NostrMode {
     FollowsForm(Form),
     ProfileWho(Form),
     ProfileEdit { identity: String, form: Form },
+    SignerWho(Form),
+    Signer,
     ExploreWho(Form),
     Explore {
         identity: String,
@@ -156,6 +161,7 @@ pub const NOSTR_MENU: &[&str] = &[
     "SEND DM   encrypted message",
     "PROFILE   view / edit my profile",
     "WHOAMI    show my npub",
+    "SIGNER    be a bunker (NIP-46)",
 ];
 
 pub enum VeilMode {
@@ -228,6 +234,7 @@ pub enum Pending {
     NostrDmSend { identity: String, recipient_hex: String, text: String },
     NostrExplore { identity: String },
     NostrExploreFollow { identity: String, author_hex: String },
+    NostrSignerStart { identity: String },
     VeilEncPass { input: String, output: String, pass: String },
     VeilEncRecipient { input: String, pub_path: String, output: String },
     VeilDecPass { input: String, output: String, pass: String },
@@ -242,6 +249,26 @@ pub enum Gate {
     Open(Session),
 }
 
+/// A running NIP-46 signer (background thread + shared log).
+pub struct SignerState {
+    pub url: String,
+    pub relay: String,
+    pub identity: String,
+    pub log: Arc<Mutex<Vec<String>>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl SignerState {
+    /// Signal the thread to stop and join it.
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
 pub struct App {
     pub gate: Gate,
     pub screen: Screen,
@@ -250,6 +277,8 @@ pub struct App {
     pub shell_requested: bool,
     /// Text staged for the terminal clipboard (emitted as OSC 52 by the loop).
     pub clipboard: Option<String>,
+    /// The active NIP-46 signer, if the SIGNER screen is running one.
+    pub signer: Option<SignerState>,
 }
 
 impl App {
@@ -271,6 +300,7 @@ impl App {
             should_quit: false,
             shell_requested: false,
             clipboard: None,
+            signer: None,
         }
     }
 
@@ -511,6 +541,8 @@ impl App {
         let mut back_home = false;
         let mut queue: Option<Pending> = None;
         let mut queue_copy: Option<String> = None;
+        let mut leave_signer = false;
+        let mut copy_signer_url = false;
         {
             let Gate::Open(session) = &self.gate else {
                 return;
@@ -578,6 +610,10 @@ impl App {
                             )),
                             8 => NostrMode::ProfileWho(Form::new(
                                 "my profile",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
+                            10 => NostrMode::SignerWho(Form::new(
+                                "be a signer (bunker)",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
                             _ => NostrMode::Whoami(Form::new(
@@ -768,6 +804,23 @@ impl App {
                     KeyCode::Char('n') | KeyCode::Esc => *mode = NostrMode::Menu(7),
                     _ => {}
                 },
+                NostrMode::SignerWho(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(10),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrSignerStart { identity });
+                        }
+                    }
+                },
+                NostrMode::Signer => match code {
+                    KeyCode::Char('c') => copy_signer_url = true,
+                    KeyCode::Esc | KeyCode::Char('q') => leave_signer = true,
+                    _ => {}
+                },
                 NostrMode::ProfileWho(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = NostrMode::Menu(8),
                     FormEvent::Editing => {}
@@ -862,6 +915,17 @@ impl App {
         }
         if queue.is_some() {
             self.pending = queue;
+        }
+        if copy_signer_url {
+            if let Some(s) = &self.signer {
+                self.clipboard = Some(s.url.clone());
+            }
+        }
+        if leave_signer {
+            if let Some(mut s) = self.signer.take() {
+                s.stop();
+            }
+            self.screen = Screen::Nostr(NostrMode::Menu(10));
         }
         if queue_copy.is_some() {
             self.clipboard = queue_copy;
@@ -1270,6 +1334,26 @@ impl App {
                     };
                 }
             }
+            Pending::NostrSignerStart { identity } => {
+                match start_signer(session, &identity) {
+                    Ok(state) => {
+                        self.signer = Some(state);
+                        if let Screen::Nostr(mode) = &mut self.screen {
+                            *mode = NostrMode::Signer;
+                        }
+                    }
+                    Err(e) => {
+                        if let Screen::Nostr(mode) = &mut self.screen {
+                            *mode = NostrMode::Results {
+                                title: "signer".into(),
+                                lines: vec![format!("failed: {e}")],
+                                copy: None,
+                                scroll: 0,
+                            };
+                        }
+                    }
+                }
+            }
             Pending::NostrDmsLoad { identity } => {
                 let result = nostr_dms(session, &identity);
                 if let Screen::Nostr(mode) = &mut self.screen {
@@ -1411,6 +1495,7 @@ fn nostr_fetch(author: &str, limit: u32) -> Result<Vec<String>> {
         authors: Some(vec![author_hex]),
         kinds: Some(vec![bp_nostr::event::KIND_TEXT_NOTE]),
         p_tags: None,
+        since: None,
         limit: Some(limit),
     };
     let relays = bp_nostr::client::resolve_relays(&[]);
@@ -1512,6 +1597,53 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
     let relays = bp_nostr::client::resolve_relays(&[]);
     bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
+    let sk = session.nostr_key(identity)?;
+    let signer_pk = bp_nostr::event::pubkey_hex(&sk)?;
+    let relay = bp_nostr::client::resolve_relays(&[])
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("no relay configured"))?;
+    let secret = bp_nostr::nip46::random_secret();
+    let url = bp_nostr::nip46::bunker_url(&signer_pk, &relay, &secret);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let log = Arc::new(Mutex::new(vec![format!("listening on {relay}")]));
+
+    let sk_bytes: [u8; 32] = *sk;
+    let relay_thread = relay.clone();
+    let stop_thread = stop.clone();
+    let log_thread = log.clone();
+    let handle = std::thread::spawn(move || {
+        let result = bp_nostr::client::run_signer(
+            &relay_thread,
+            &sk_bytes,
+            &secret,
+            &stop_thread,
+            |l| {
+                let mut g = log_thread.lock().unwrap();
+                g.push(format!("{} · {} → {}", l.client, l.method, l.outcome));
+                let len = g.len();
+                if len > 200 {
+                    g.drain(0..len - 200);
+                }
+            },
+        );
+        if let Err(e) = result {
+            log_thread.lock().unwrap().push(format!("stopped: {e}"));
+        }
+    });
+
+    Ok(SignerState {
+        url,
+        relay,
+        identity: identity.to_string(),
+        log,
+        stop,
+        handle: Some(handle),
+    })
 }
 
 fn nostr_suggestions(session: &Session, identity: &str) -> Result<Vec<SuggestEntry>> {
@@ -2208,7 +2340,8 @@ mod tests {
         // c on the WHOAMI results stages the same npub.
         app.on_key(KeyCode::Char('2'));
         app.on_key(KeyCode::Enter); // NOSTR menu
-        app.on_key(KeyCode::Up); // wrap to WHOAMI (last entry)
+        app.on_key(KeyCode::Up); // wrap to last entry (SIGNER)
+        app.on_key(KeyCode::Up); // -> WHOAMI
         app.on_key(KeyCode::Enter); // WHOAMI form (identity prefilled)
         app.on_key(KeyCode::Enter); // submit
         assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Results { .. })));

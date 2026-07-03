@@ -74,7 +74,11 @@ pub fn render(f: &mut Frame, app: &App) {
                 );
             }
             Screen::Nostr(mode) => {
-                render_nostr(f, root[1], mode);
+                if matches!(mode, NostrMode::Signer) {
+                    render_signer(f, root[1], app.signer.as_ref());
+                } else {
+                    render_nostr(f, root[1], mode);
+                }
                 render_keybar(f, root[2], mode_keys_nostr(mode));
             }
             Screen::Veil(mode) => {
@@ -134,6 +138,7 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
         NostrMode::Explore { .. } => {
             &[("j/k", "select"), ("f", "follow"), ("c", "copy npub"), ("esc", "back")]
         }
+        NostrMode::Signer => &[("c", "copy bunker url"), ("esc", "stop & back")],
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
 }
@@ -350,6 +355,8 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::FollowsForm(form)
         | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
         NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
+        NostrMode::SignerWho(form) => render_form_page(f, area, form),
+        NostrMode::Signer => {} // rendered from app.signer in render()
         NostrMode::ExploreWho(form) => render_form_page(f, area, form),
         NostrMode::Explore { entries, selected, status, .. } => {
             render_explore(f, area, entries, *selected, status)
@@ -427,6 +434,50 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
             render_lines_scrolled(f, area, title, lines, *scroll)
         }
     }
+}
+
+fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerState>) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(6), Constraint::Min(3)])
+        .split(area);
+
+    let Some(s) = signer else {
+        f.render_widget(
+            Paragraph::new("signer not running").style(dim()).block(titled_block(" ▞▞ SIGNER ")),
+            area,
+        );
+        return;
+    };
+
+    let head = vec![
+        Line::from(vec![
+            Span::styled("signing as ", dim()),
+            Span::styled(s.identity.clone(), accent()),
+            Span::styled("   relay ", dim()),
+            Span::styled(s.relay.clone(), accent()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled("paste this bunker URL into your Nostr client:", dim())),
+        Line::from(Span::styled(s.url.clone(), bold(alert()))),
+    ];
+    f.render_widget(
+        Paragraph::new(head)
+            .wrap(Wrap { trim: false })
+            .block(titled_block(" ▞▞ SIGNER — key stays on this deck ")),
+        rows[0],
+    );
+
+    let log = s.log.lock().unwrap();
+    let start = log.len().saturating_sub(rows[1].height.saturating_sub(2) as usize);
+    let lines: Vec<Line> = log[start..]
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), phosphor())))
+        .collect();
+    f.render_widget(
+        Paragraph::new(lines).block(titled_block(" ▞▞ REQUESTS ")),
+        rows[1],
+    );
 }
 
 fn render_explore(
