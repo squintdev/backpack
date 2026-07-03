@@ -20,6 +20,7 @@ nostr profile  --identity NAME | --author <npub|hex>
 nostr set-profile --identity NAME [--name N] [--about A] [--picture URL] [--nip05 ID]
 nostr dm      --identity NAME <npub|hex> "text"   # send an encrypted DM
 nostr dms     --identity NAME [--limit N]         # read your DMs
+nostr explore --identity NAME [--limit N]         # suggested accounts to follow
 ```
 
 ```sh
@@ -92,6 +93,19 @@ relays and only the flags you pass change — fields written by other clients
 clears a field. The timeline labels authors by your petname first, then their
 profile `name`, then a pubkey prefix.
 
+## Explore (suggested follows)
+
+`explore` suggests accounts to follow from the **social graph**, using only the
+relay stack — no third-party HTTP service. It gathers a seed set (the accounts
+you already follow, or a small built-in list of well-known accounts if you
+follow no one yet), fetches each seed's contact list, and ranks the accounts
+they follow by how many seeds follow them — then enriches the top results with
+profile names and bios. The score is that follow count. As you follow more
+people the suggestions become genuine follows-of-follows.
+
+(A public directory like nostr.directory can't drive this — it only offers
+single-name NIP-05 lookups, not a popular-accounts list.)
+
 ## Direct messages (NIP-04)
 
 `dm` sends an encrypted kind-4 message; `dms` fetches and decrypts your inbox
@@ -112,7 +126,7 @@ not treat NIP-04 as private communication against a network observer.
 - Posting reveals your pubkey and a timestamp. Timing correlation is a real
   metadata leak; content is signed but **not encrypted** (DMs are a different
   NIP, unimplemented).
-- v0.1: text notes, follows, profiles, and NIP-04 direct messages — no reactions or NIP-17 private DMs yet.
+- v0.1: text notes, follows, profiles, graph-based explore, and NIP-04 direct messages — no reactions or NIP-17 private DMs yet.
 
 ## See also
 

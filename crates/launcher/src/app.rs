@@ -96,6 +96,13 @@ pub enum NostrMode {
     FollowsForm(Form),
     ProfileWho(Form),
     ProfileEdit { identity: String, form: Form },
+    ExploreWho(Form),
+    Explore {
+        identity: String,
+        entries: Vec<SuggestEntry>,
+        selected: usize,
+        status: String,
+    },
     DmsWho(Form),
     SendDm(Form),
     ConfirmDm { identity: String, recipient_hex: String, recipient_label: String, text: String },
@@ -124,12 +131,23 @@ pub struct FollowEntry {
     pub hex: String,
 }
 
+/// One row in the EXPLORE (suggested follows) screen.
+#[derive(Clone)]
+pub struct SuggestEntry {
+    pub label: String,
+    pub about: String,
+    pub npub: String,
+    pub hex: String,
+    pub score: u32,
+}
+
 pub const NOSTR_MENU: &[&str] = &[
     "TIMELINE  notes from who I follow",
     "POST      publish a note",
     "FETCH     read one author",
     "FOLLOW    add an author",
     "FOLLOWS   manage my follows",
+    "EXPLORE   find people to follow",
     "MESSAGES  read my DMs",
     "SEND DM   encrypted message",
     "PROFILE   view / edit my profile",
@@ -204,6 +222,8 @@ pub enum Pending {
     NostrProfileSave { identity: String, updates: Vec<(String, String)> },
     NostrDmsLoad { identity: String },
     NostrDmSend { identity: String, recipient_hex: String, text: String },
+    NostrExplore { identity: String },
+    NostrExploreFollow { identity: String, author_hex: String },
     VeilEncPass { input: String, output: String, pass: String },
     VeilEncRecipient { input: String, pub_path: String, output: String },
     VeilDecPass { input: String, output: String, pass: String },
@@ -502,11 +522,15 @@ impl App {
                                 "my follows",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
-                            5 => NostrMode::DmsWho(Form::new(
+                            5 => NostrMode::ExploreWho(Form::new(
+                                "find people to follow",
+                                vec![Field::new("identity").with_value(&first)],
+                            )),
+                            6 => NostrMode::DmsWho(Form::new(
                                 "read messages",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
-                            6 => NostrMode::SendDm(Form::new(
+                            7 => NostrMode::SendDm(Form::new(
                                 "send encrypted DM",
                                 vec![
                                     Field::new("identity").with_value(&first),
@@ -514,7 +538,7 @@ impl App {
                                     Field::new("message"),
                                 ],
                             )),
-                            7 => NostrMode::ProfileWho(Form::new(
+                            8 => NostrMode::ProfileWho(Form::new(
                                 "my profile",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
@@ -624,8 +648,41 @@ impl App {
                         }
                     }
                 },
-                NostrMode::DmsWho(form) => match form.on_key(code) {
+                NostrMode::ExploreWho(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let identity = form.value(0).to_string();
+                        if let Err(e) = session.nostr_key(&identity) {
+                            form.error = Some(format!("{e}"));
+                        } else {
+                            queue = Some(Pending::NostrExplore { identity });
+                        }
+                    }
+                },
+                NostrMode::Explore { identity, entries, selected, .. } => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(5),
+                    KeyCode::Char('j') | KeyCode::Down if *selected + 1 < entries.len() => {
+                        *selected += 1
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => *selected = selected.saturating_sub(1),
+                    KeyCode::Char('c') => {
+                        if let Some(e) = entries.get(*selected) {
+                            queue_copy = Some(e.npub.clone());
+                        }
+                    }
+                    KeyCode::Char('f') => {
+                        if let Some(e) = entries.get(*selected) {
+                            queue = Some(Pending::NostrExploreFollow {
+                                identity: identity.clone(),
+                                author_hex: e.hex.clone(),
+                            });
+                        }
+                    }
+                    _ => {}
+                },
+                NostrMode::DmsWho(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(6),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
                         let identity = form.value(0).to_string();
@@ -637,7 +694,7 @@ impl App {
                     }
                 },
                 NostrMode::SendDm(form) => match form.on_key(code) {
-                    FormEvent::Cancel => *mode = NostrMode::Menu(6),
+                    FormEvent::Cancel => *mode = NostrMode::Menu(7),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
                         let identity = form.value(0).to_string();
@@ -670,11 +727,11 @@ impl App {
                             text: text.clone(),
                         });
                     }
-                    KeyCode::Char('n') | KeyCode::Esc => *mode = NostrMode::Menu(6),
+                    KeyCode::Char('n') | KeyCode::Esc => *mode = NostrMode::Menu(7),
                     _ => {}
                 },
                 NostrMode::ProfileWho(form) => match form.on_key(code) {
-                    FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Cancel => *mode = NostrMode::Menu(8),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
                         let identity = form.value(0).to_string();
@@ -686,7 +743,7 @@ impl App {
                     }
                 },
                 NostrMode::ProfileEdit { identity, form } => match form.on_key(code) {
-                    FormEvent::Cancel => *mode = NostrMode::Menu(5),
+                    FormEvent::Cancel => *mode = NostrMode::Menu(8),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
                         let updates: Vec<(String, String)> = ["name", "about", "picture", "nip05"]
@@ -1133,6 +1190,48 @@ impl App {
                     };
                 }
             }
+            Pending::NostrExplore { identity } => {
+                let result = nostr_suggestions(session, &identity);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(entries) => NostrMode::Explore {
+                            identity,
+                            entries,
+                            selected: 0,
+                            status: String::new(),
+                        },
+                        Err(e) => NostrMode::Results {
+                            title: "explore".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        },
+                    };
+                }
+            }
+            Pending::NostrExploreFollow { identity, author_hex } => {
+                let followed = nostr_follow(session, &identity, &author_hex, None);
+                let rebuilt = nostr_suggestions(session, &identity);
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = match rebuilt {
+                        Ok(entries) => NostrMode::Explore {
+                            identity,
+                            entries,
+                            selected: 0,
+                            status: match followed {
+                                Ok(_) => "followed ✓".to_string(),
+                                Err(e) => format!("follow failed: {e}"),
+                            },
+                        },
+                        Err(e) => NostrMode::Results {
+                            title: "explore".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        },
+                    };
+                }
+            }
             Pending::NostrDmsLoad { identity } => {
                 let result = nostr_dms(session, &identity);
                 if let Screen::Nostr(mode) = &mut self.screen {
@@ -1375,6 +1474,33 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
     let relays = bp_nostr::client::resolve_relays(&[]);
     bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+fn nostr_suggestions(session: &Session, identity: &str) -> Result<Vec<SuggestEntry>> {
+    let sk = session.nostr_key(identity)?;
+    let me = bp_nostr::event::pubkey_hex(&sk)?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    let my_follows: Vec<String> = bp_nostr::client::follows(&relays, &me)
+        .map_err(|e| anyhow!(e))?
+        .into_iter()
+        .map(|c| c.pubkey)
+        .collect();
+    let suggestions =
+        bp_nostr::client::suggest_follows(&relays, &my_follows, &me, 25).map_err(|e| anyhow!(e))?;
+    Ok(suggestions
+        .into_iter()
+        .map(|s| {
+            let pk: [u8; 32] = hex::decode(&s.pubkey).unwrap().try_into().unwrap();
+            let npub = bp_nostr::nip19::npub_encode(&pk);
+            SuggestEntry {
+                label: s.name.unwrap_or_else(|| format!("{}…", &npub[..16])),
+                about: s.about.unwrap_or_default(),
+                npub,
+                hex: s.pubkey,
+                score: s.score,
+            }
+        })
+        .collect())
 }
 
 fn nostr_dms(session: &Session, identity: &str) -> Result<Vec<String>> {
@@ -2152,7 +2278,7 @@ mod tests {
 
         // PROFILE -> identity form -> queues a load.
         if let Gate::Open(_) = app.gate {
-            app.screen = Screen::Nostr(NostrMode::Menu(7));
+            app.screen = Screen::Nostr(NostrMode::Menu(8));
         }
         app.on_key(KeyCode::Enter); // ProfileWho form
         app.on_key(KeyCode::Enter); // identity prefilled -> submit
@@ -2206,7 +2332,7 @@ mod tests {
 
         // SEND DM at menu index 6.
         if let Gate::Open(_) = app.gate {
-            app.screen = Screen::Nostr(NostrMode::Menu(6));
+            app.screen = Screen::Nostr(NostrMode::Menu(7));
         }
         app.on_key(KeyCode::Enter); // SendDm form
         app.on_key(KeyCode::Enter); // identity prefilled -> to
@@ -2237,7 +2363,7 @@ mod tests {
         app.on_key(KeyCode::Enter);
         app.on_key(KeyCode::Esc);
         if let Gate::Open(_) = app.gate {
-            app.screen = Screen::Nostr(NostrMode::Menu(6));
+            app.screen = Screen::Nostr(NostrMode::Menu(7));
         }
         app.on_key(KeyCode::Enter);
         app.on_key(KeyCode::Enter); // identity -> to (empty)
@@ -2247,6 +2373,41 @@ mod tests {
             Screen::Nostr(NostrMode::SendDm(form)) => assert!(form.error.is_some()),
             _ => panic!("expected send-dm form error"),
         }
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn explore_follow_and_copy_queue_actions() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        // Directly construct an Explore screen (suggestions are a network op).
+        let entry = SuggestEntry {
+            label: "fiatjaf".into(),
+            about: "nostr".into(),
+            npub: "npub1fiatjaf".into(),
+            hex: "ab".repeat(32),
+            score: 5,
+        };
+        app.screen = Screen::Nostr(NostrMode::Explore {
+            identity: "kim".into(),
+            entries: vec![entry.clone(), entry],
+            selected: 0,
+            status: String::new(),
+        });
+        app.on_key(KeyCode::Char('j'));
+        if let Screen::Nostr(NostrMode::Explore { selected, .. }) = &app.screen {
+            assert_eq!(*selected, 1);
+        } else {
+            panic!("expected explore");
+        }
+        app.on_key(KeyCode::Char('c'));
+        assert_eq!(app.clipboard.take().as_deref(), Some("npub1fiatjaf"));
+        app.on_key(KeyCode::Char('f'));
+        assert!(matches!(
+            app.pending.take(),
+            Some(Pending::NostrExploreFollow { .. })
+        ));
         std::fs::remove_file(&store).ok();
     }
 

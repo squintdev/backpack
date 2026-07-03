@@ -313,6 +313,104 @@ pub fn fetch_profiles(
         .collect())
 }
 
+/// Well-known Nostr accounts used to bootstrap suggestions when the caller
+/// follows no one yet. Stored as npub (bech32 has a checksum, so a typo fails
+/// to decode and is skipped rather than resolving to a wrong key).
+pub const BOOTSTRAP_SEEDS: &[&str] = &[
+    "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6", // fiatjaf
+    "npub1sg6plzptd64u62a878hep2kev88swjh3tw00gjsfl8f237lmu63q0uf63m", // jack
+    "npub1xtscya34g58tk0z605fvr788k263gsu6cy9x0mhnm87echrgufzsevkk5s", // jb55
+    "npub1qny3tkh0acurzla8x3zy4nhrjz5zd8l9sy9jys09umwng00manysew95gx", // ODELL
+    "npub1dergggklka99wwrs92yz8wdjs952h2ux2ha2ed598ngwu9w7a6fsh9xzpc", // gigi
+];
+
+/// A suggested account to follow.
+pub struct Suggestion {
+    pub pubkey: String,
+    pub name: Option<String>,
+    pub about: Option<String>,
+    /// How many of the seed accounts follow this pubkey (popularity signal).
+    pub score: u32,
+}
+
+/// Suggest accounts to follow from the social graph: tally who the seed
+/// accounts follow, drop the caller and their existing follows, rank by count,
+/// and enrich the top `limit` with profile names/bios.
+///
+/// Seeds are the caller's own follows when they have any (follows-of-follows),
+/// otherwise [`BOOTSTRAP_SEEDS`]. Uses only the relay stack — no HTTP.
+pub fn suggest_follows(
+    relays: &[String],
+    my_follows: &[String],
+    me_hex: &str,
+    limit: u32,
+) -> IoResult<Vec<Suggestion>> {
+    let mut seeds: Vec<String> = if my_follows.is_empty() {
+        BOOTSTRAP_SEEDS
+            .iter()
+            .filter_map(|s| crate::nip19::npub_decode(s).ok().map(hex::encode))
+            .collect()
+    } else {
+        my_follows.to_vec()
+    };
+    seeds.sort();
+    seeds.dedup();
+    if seeds.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let filter = Filter {
+        authors: Some(seeds.clone()),
+        kinds: Some(vec![crate::contacts::KIND_CONTACTS]),
+        p_tags: None,
+        limit: Some(seeds.len() as u32),
+    };
+    let events = fetch_all(relays, &filter)?;
+
+    // Newest kind-3 per seed author.
+    let mut newest: std::collections::HashMap<String, Event> = std::collections::HashMap::new();
+    for ev in events {
+        match newest.get(&ev.pubkey) {
+            Some(cur) if cur.created_at >= ev.created_at => {}
+            _ => {
+                newest.insert(ev.pubkey.clone(), ev);
+            }
+        }
+    }
+
+    let mine: std::collections::HashSet<&str> = my_follows.iter().map(String::as_str).collect();
+    let mut score: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for ev in newest.values() {
+        for c in crate::contacts::parse_contacts(ev) {
+            if c.pubkey == me_hex || mine.contains(c.pubkey.as_str()) {
+                continue;
+            }
+            *score.entry(c.pubkey).or_default() += 1;
+        }
+    }
+
+    let mut ranked: Vec<(String, u32)> = score.into_iter().collect();
+    // Highest score first; stable tiebreak by pubkey for determinism.
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.truncate(limit as usize);
+
+    let pubkeys: Vec<String> = ranked.iter().map(|(k, _)| k.clone()).collect();
+    let profiles = fetch_profiles(relays, pubkeys).unwrap_or_default();
+
+    Ok(ranked
+        .into_iter()
+        .map(|(pubkey, score)| {
+            let p = profiles.get(&pubkey);
+            Suggestion {
+                name: p.and_then(|m| crate::profile::field(m, "name")),
+                about: p.and_then(|m| crate::profile::field(m, "about")),
+                pubkey,
+                score,
+            }
+        })
+        .collect())
+}
+
 /// Current follows for the holder of `sk` (their newest kind-3 across relays).
 pub fn follows(relays: &[String], author_hex: &str) -> IoResult<Vec<crate::contacts::Contact>> {
     Ok(latest_contacts(relays, author_hex)?
