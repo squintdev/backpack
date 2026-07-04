@@ -82,12 +82,37 @@ fn connect_with_timeout(url: &str, read_timeout: Duration) -> IoResult<Socket> {
         .ok_or_else(|| format!("{host}: no addresses"))?;
     let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
         .map_err(|e| format!("connecting to {url}: {e}"))?;
+    // Generous timeout while the TLS + WebSocket handshake runs; the caller's
+    // (possibly much shorter) read timeout is applied only afterwards. A short
+    // pre-handshake timeout makes slow TLS fail with WouldBlock forever.
     stream
-        .set_read_timeout(Some(read_timeout))
+        .set_read_timeout(Some(READ_TIMEOUT))
         .and_then(|_| stream.set_write_timeout(Some(READ_TIMEOUT)))
         .map_err(|e| format!("setting timeouts: {e}"))?;
-    let (socket, _resp) =
-        tungstenite::client_tls(url, stream).map_err(|e| format!("handshake with {url}: {e}"))?;
+
+    // A read timeout during the handshake surfaces as Interrupted, which is
+    // resumable — keep driving it until the deadline.
+    let deadline = std::time::Instant::now() + READ_TIMEOUT;
+    let mut attempt = tungstenite::client_tls(url, stream);
+    let (socket, _resp) = loop {
+        match attempt {
+            Ok(ok) => break ok,
+            Err(tungstenite::HandshakeError::Interrupted(mid))
+                if std::time::Instant::now() < deadline =>
+            {
+                attempt = mid.handshake();
+            }
+            Err(e) => return Err(format!("handshake with {url}: {e}")),
+        }
+    };
+
+    let tcp = match socket.get_ref() {
+        tungstenite::stream::MaybeTlsStream::Plain(s) => s,
+        tungstenite::stream::MaybeTlsStream::Rustls(s) => s.get_ref(),
+        _ => return Err("unexpected stream type".into()),
+    };
+    tcp.set_read_timeout(Some(read_timeout))
+        .map_err(|e| format!("setting timeouts: {e}"))?;
     Ok(socket)
 }
 

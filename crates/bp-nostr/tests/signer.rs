@@ -15,7 +15,9 @@ use bp_nostr::relay::{parse, publish_frame, req_frame, Filter, RelayMsg};
 use tungstenite::stream::MaybeTlsStream as MaybeTls;
 use tungstenite::Message;
 
-const RELAY: &str = "wss://relay.damus.io";
+// nos.lol is the stabler choice for the single-relay test; damus (Cloudflare)
+// intermittently 520s WS upgrades and is still covered by the multi-relay test.
+const RELAY: &str = "wss://nos.lol";
 
 fn now() -> u64 {
     std::time::SystemTime::now()
