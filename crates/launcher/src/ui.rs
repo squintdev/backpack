@@ -532,7 +532,7 @@ fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerSt
         Line::from(vec![
             Span::styled("signing as ", dim()),
             Span::styled(s.identity.clone(), accent()),
-            Span::styled("   relay ", dim()),
+            Span::styled("   relays ", dim()),
             Span::styled(s.relay.clone(), accent()),
         ]),
         Line::from(""),

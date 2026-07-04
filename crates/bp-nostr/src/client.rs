@@ -630,7 +630,77 @@ pub fn run_signer(
     signer_sk: &[u8; 32],
     secret: &str,
     stop: &AtomicBool,
-    mut on_log: impl FnMut(SignerLog),
+    on_log: impl FnMut(SignerLog) + Send,
+) -> IoResult<()> {
+    let shared = SignerShared::default();
+    let cb = std::sync::Mutex::new(on_log);
+    signer_connection(relay, signer_sk, secret, stop, &shared, &|l| {
+        (cb.lock().unwrap())(l)
+    })
+}
+
+/// Run the signer on several relays at once: one connection per relay, shared
+/// client authorization and request dedup, and automatic reconnection — a
+/// single relay outage neither kills the signer nor drops a client that
+/// `connect`ed via a different relay. Returns when `stop` is set.
+pub fn run_signer_multi(
+    relays: &[String],
+    signer_sk: &[u8; 32],
+    secret: &str,
+    stop: &AtomicBool,
+    on_log: impl Fn(SignerLog) + Send + Sync,
+) -> IoResult<()> {
+    if relays.is_empty() {
+        return Err("no relays".into());
+    }
+    let shared = SignerShared::default();
+    std::thread::scope(|scope| {
+        for relay in relays {
+            let shared = &shared;
+            let on_log = &on_log;
+            scope.spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    match signer_connection(relay, signer_sk, secret, stop, shared, on_log) {
+                        Ok(()) => break, // clean stop
+                        Err(e) => {
+                            on_log(SignerLog {
+                                client: relay.clone(),
+                                method: "(relay)".into(),
+                                outcome: format!("{e}; retrying in 5s"),
+                            });
+                            // Sleep in short slices so stop stays responsive.
+                            for _ in 0..50 {
+                                if stop.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(100));
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    });
+    Ok(())
+}
+
+/// State shared by every relay connection of one signer: which clients have
+/// authorized (connect-then-sign must hold across relays) and which request
+/// events were already handled (a client publishes each request to all its
+/// relays; only the first copy gets a response).
+#[derive(Default)]
+struct SignerShared {
+    authorized: std::sync::Mutex<std::collections::HashSet<String>>,
+    seen: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+fn signer_connection(
+    relay: &str,
+    signer_sk: &[u8; 32],
+    secret: &str,
+    stop: &AtomicBool,
+    shared: &SignerShared,
+    on_log: &(dyn Fn(SignerLog) + Sync),
 ) -> IoResult<()> {
     use crate::nip46::{is_read_only, respond, Request, KIND_RPC};
 
@@ -651,8 +721,6 @@ pub fn run_signer(
     socket
         .send(Message::Text(req_frame("bpsigner", &filter)))
         .map_err(|e| format!("subscribe: {e}"))?;
-
-    let mut authorized: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     while !stop.load(Ordering::Relaxed) {
         let msg = match socket.read() {
@@ -678,6 +746,16 @@ pub fn run_signer(
         };
         if ev.kind != KIND_RPC || verify_event(&ev).is_err() {
             continue;
+        }
+        {
+            // Same request may arrive via several relays — handle it once.
+            let mut seen = shared.seen.lock().unwrap();
+            if seen.len() > 4096 {
+                seen.clear();
+            }
+            if !seen.insert(ev.id.clone()) {
+                continue;
+            }
         }
 
         let client = ev.pubkey.clone();
@@ -710,10 +788,10 @@ pub fn run_signer(
         let response = if req.method == "connect" {
             let r = respond(signer_sk, &req, secret);
             if r.error.is_none() {
-                authorized.insert(client.clone());
+                shared.authorized.lock().unwrap().insert(client.clone());
             }
             r
-        } else if is_read_only(&req.method) || authorized.contains(&client) {
+        } else if is_read_only(&req.method) || shared.authorized.lock().unwrap().contains(&client) {
             respond(signer_sk, &req, secret)
         } else {
             crate::nip46::Response {

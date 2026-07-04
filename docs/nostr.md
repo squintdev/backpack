@@ -128,8 +128,14 @@ so the key never leaves the deck. `nostr bunker --identity NAME` (or the TUI
 NOSTR → SIGNER screen) prints a `bunker://` URL:
 
 ```text
-bunker://<signer-pubkey>?relay=wss://…&secret=<random>
+bunker://<signer-pubkey>?relay=wss://…&relay=wss://…&secret=<random>
 ```
+
+The signer listens on **all** configured relays at once (one connection per
+relay, with automatic reconnect), so a single relay outage neither kills the
+signer nor blocks a login. Authorization and request handling are shared
+across relays: a client may `connect` via one relay and send signing requests
+via another, and a request published to several relays is answered once.
 
 Paste that into a NIP-46-capable client (e.g. ditto.pub's "remote signer"
 login). The client sends signing requests to backpack over the relay; backpack
@@ -142,8 +148,8 @@ the client's connection key and the signer. Modern clients (ditto.pub) use
 accepts legacy NIP-04 and replies in whichever scheme the client used. A client must `connect`
 with the URL's secret before any signing is honored (connect-then-sign); the
 `secret` in the URL is the authorization, so treat the URL like a password.
-Supported methods: connect, get_public_key, sign_event, nip04_encrypt/decrypt,
-ping. The signer runs while the SIGNER screen (or `bunker` command) is open and
+Supported methods: connect, ping, get_public_key, get_relays, sign_event,
+nip04_encrypt/decrypt, nip44_encrypt/decrypt. The signer runs while the SIGNER screen (or `bunker` command) is open and
 logs each request; closing it stops signing.
 
 Note: kind-24133 is an ephemeral event — relays forward it to the connected

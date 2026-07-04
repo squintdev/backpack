@@ -120,5 +120,23 @@ permanent.
   before you encrypt/publish; split around any secret, including a `veil` or
   `keyring` passphrase.
 
+## Provable warrant canary
+
+Sign a canary, then timestamp it — later you can prove the canary existed
+(and when), even if the page hosting it disappears:
+
+```sh
+canary new --key ops --days 30 --statement "No warrants received." -o canary.txt
+stamp canary.txt                        # -> canary.txt.ots (pending)
+# … a few hours later …
+stamp upgrade canary.txt.ots            # Bitcoin attestation
+stamp verify canary.txt                 # OK: existed by <time> (block N)
+canary check canary.txt                 # ALIVE / EXPIRED
+```
+
+Renewals: re-run `canary renew` + `stamp` on each cycle and archive the old
+pairs — the sequence numbers plus timestamps form a provable, gap-free chain.
+
 See each tool's page for details: [bp-core](bp-core.md) · [veil](veil.md) ·
-[scrub](scrub.md) · [split](split.md) · [keyring](keyring.md) · [nostr](nostr.md).
+[scrub](scrub.md) · [split](split.md) · [keyring](keyring.md) ·
+[canary](canary.md) · [stamp](stamp.md) · [nostr](nostr.md).

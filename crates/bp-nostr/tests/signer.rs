@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bp_nostr::client::run_signer;
+use bp_nostr::client::{run_signer, run_signer_multi};
 use bp_nostr::event::{pubkey_hex, sign_event, verify_event, Event};
 use bp_nostr::nip44;
 use bp_nostr::nip46::{Response, KIND_RPC};
@@ -34,6 +34,28 @@ fn rpc(
     method: &str,
     params: serde_json::Value,
 ) -> Response {
+    rpc_on(
+        RELAY,
+        client_sk,
+        client_pk,
+        signer_pub,
+        signer_pk_hex,
+        method,
+        params,
+    )
+}
+
+/// Same as [`rpc`] but over a specific relay.
+#[allow(clippy::too_many_arguments)]
+fn rpc_on(
+    relay: &str,
+    client_sk: &[u8; 32],
+    client_pk: &str,
+    signer_pub: &[u8; 32],
+    signer_pk_hex: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Response {
     let id = format!("{method}-{}", now());
     let body = serde_json::json!({ "id": id, "method": method, "params": params }).to_string();
     let enc = nip44::encrypt(client_sk, signer_pub, &body).unwrap();
@@ -49,7 +71,7 @@ fn rpc(
     // Kind 24133 is ephemeral: relays forward to live subscribers but do not
     // store it. So subscribe first, then publish on the same live socket, then
     // read the response off the subscription.
-    let (mut sock, _) = tungstenite::connect(RELAY).unwrap();
+    let (mut sock, _) = tungstenite::connect(relay).unwrap();
     if let MaybeTls::Rustls(s) = sock.get_ref() {
         s.get_ref()
             .set_read_timeout(Some(Duration::from_secs(2)))
@@ -155,4 +177,64 @@ fn remote_sign_over_relay() {
         .unwrap()
         .iter()
         .any(|l| l.contains("sign_event ok")));
+}
+
+/// Multi-relay signer: authorize via one relay, sign via another. Proves the
+/// authorization set and request dedup are shared across relay connections.
+#[test]
+#[ignore = "runs a live multi-relay signer against public relays"]
+fn remote_sign_across_relays() {
+    const RELAY_A: &str = "wss://relay.damus.io";
+    const RELAY_B: &str = "wss://nos.lol";
+
+    let signer_sk = [5u8; 32];
+    let signer_pk_hex = pubkey_hex(&signer_sk).unwrap();
+    let signer_pub: [u8; 32] = hex::decode(&signer_pk_hex).unwrap().try_into().unwrap();
+    let client_sk = [6u8; 32];
+    let client_pk_hex = pubkey_hex(&client_sk).unwrap();
+    let secret = "multi-secret";
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let signer = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            let relays = vec![RELAY_A.to_string(), RELAY_B.to_string()];
+            let _ = run_signer_multi(&relays, &signer_sk, secret, &stop, |_| {});
+        })
+    };
+    std::thread::sleep(Duration::from_secs(2));
+
+    // connect on relay A…
+    let c = rpc_on(
+        RELAY_A,
+        &client_sk,
+        &client_pk_hex,
+        &signer_pub,
+        &signer_pk_hex,
+        "connect",
+        serde_json::json!([signer_pk_hex, secret]),
+    );
+    assert!(c.error.is_none(), "connect failed: {:?}", c.error);
+
+    // …then sign on relay B: authorization must carry over.
+    let tmpl = serde_json::json!({
+        "kind": 1, "created_at": now(), "tags": [], "content": "multi-relay"
+    })
+    .to_string();
+    let s = rpc_on(
+        RELAY_B,
+        &client_sk,
+        &client_pk_hex,
+        &signer_pub,
+        &signer_pk_hex,
+        "sign_event",
+        serde_json::json!([tmpl]),
+    );
+    assert!(s.error.is_none(), "sign failed: {:?}", s.error);
+    let ev: Event = serde_json::from_str(&s.result).unwrap();
+    verify_event(&ev).unwrap();
+    assert_eq!(ev.pubkey, signer_pk_hex);
+
+    stop.store(true, Ordering::Relaxed);
+    signer.join().unwrap();
 }

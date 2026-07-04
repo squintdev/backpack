@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 
 use bp_nostr::client::{
     fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays,
-    run_signer, send_dm, set_profile, suggest_follows,
+    run_signer_multi, send_dm, set_profile, suggest_follows,
 };
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
@@ -272,18 +272,17 @@ fn run_export_key(identity: &str, yes: bool) -> Result<()> {
 fn run_bunker(identity: &str, relays: &[String]) -> Result<()> {
     let sk = load_nostr_key(identity)?;
     let signer_pk = pubkey_hex(&sk)?;
-    let relay = relays.first().cloned().unwrap_or_default();
     let secret = bp_nostr::nip46::random_secret();
-    let url = bp_nostr::nip46::bunker_url(&signer_pk, &relay, &secret);
+    let url = bp_nostr::nip46::bunker_url(&signer_pk, relays, &secret);
 
-    eprintln!("Signing as {identity:?} on {relay}");
+    eprintln!("Signing as {identity:?} on {}", relays.join(", "));
     eprintln!("Paste this into your Nostr client (keeps the key on this machine):");
     println!("{url}");
     eprintln!("Waiting for requests — Ctrl-C to stop.");
 
     // No stop flag: the process runs until interrupted.
     let never = AtomicBool::new(false);
-    run_signer(&relay, &sk, &secret, &never, |l| {
+    run_signer_multi(relays, &sk, &secret, &never, |l| {
         eprintln!("  {} {} → {}", l.client, l.method, l.outcome);
     })
     .map_err(|e| anyhow!(e))

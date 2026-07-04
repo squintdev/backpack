@@ -385,6 +385,7 @@ pub enum Gate {
 /// A running NIP-46 signer (background thread + shared log).
 pub struct SignerState {
     pub url: String,
+    /// Display label: the relays the signer listens on, comma-separated.
     pub relay: String,
     pub identity: String,
     pub log: Arc<Mutex<Vec<String>>>,
@@ -2077,30 +2078,41 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
 fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
     let sk = session.nostr_key(identity)?;
     let signer_pk = bp_nostr::event::pubkey_hex(&sk)?;
-    let relay = bp_nostr::client::resolve_relays(&[])
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow!("no relay configured"))?;
+    let relays = bp_nostr::client::resolve_relays(&[]);
+    if relays.is_empty() {
+        bail!("no relay configured");
+    }
     let secret = bp_nostr::nip46::random_secret();
-    let url = bp_nostr::nip46::bunker_url(&signer_pk, &relay, &secret);
+    let url = bp_nostr::nip46::bunker_url(&signer_pk, &relays, &secret);
 
     let stop = Arc::new(AtomicBool::new(false));
-    let log = Arc::new(Mutex::new(vec![format!("listening on {relay}")]));
+    let log = Arc::new(Mutex::new(
+        relays
+            .iter()
+            .map(|r| format!("listening on {r}"))
+            .collect::<Vec<_>>(),
+    ));
 
     let sk_bytes: [u8; 32] = *sk;
-    let relay_thread = relay.clone();
+    let relay_label = relays.join(", ");
+    let relays_thread = relays.clone();
     let stop_thread = stop.clone();
     let log_thread = log.clone();
     let handle = std::thread::spawn(move || {
-        let result =
-            bp_nostr::client::run_signer(&relay_thread, &sk_bytes, &secret, &stop_thread, |l| {
+        let result = bp_nostr::client::run_signer_multi(
+            &relays_thread,
+            &sk_bytes,
+            &secret,
+            &stop_thread,
+            |l| {
                 let mut g = log_thread.lock().unwrap();
                 g.push(format!("{} · {} → {}", l.client, l.method, l.outcome));
                 let len = g.len();
                 if len > 200 {
                     g.drain(0..len - 200);
                 }
-            });
+            },
+        );
         if let Err(e) = result {
             log_thread.lock().unwrap().push(format!("stopped: {e}"));
         }
@@ -2108,7 +2120,7 @@ fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
 
     Ok(SignerState {
         url,
-        relay,
+        relay: relay_label,
         identity: identity.to_string(),
         log,
         stop,
