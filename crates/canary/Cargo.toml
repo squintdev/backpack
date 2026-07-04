@@ -1,0 +1,20 @@
+[package]
+name = "canary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Warrant canary: signed, expiring dead-man statements"
+
+[[bin]]
+name = "canary"
+path = "src/main.rs"
+
+[dependencies]
+keyring = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+rpassword = { workspace = true }
+zeroize = { workspace = true }
+hex = { workspace = true }

@@ -6,6 +6,7 @@ members = [
     "crates/scrub",
     "crates/split",
     "crates/keyring",
+    "crates/canary",
     "crates/launcher",
     "crates/bp-nostr",
 ]

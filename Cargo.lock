@@ -253,6 +253,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
+name = "canary"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "keyring",
+ "rpassword",
+ "thiserror 2.0.18",
+ "zeroize",
+]
+
+[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1135,6 +1148,7 @@ dependencies = [
  "anyhow",
  "base64",
  "bp-nostr",
+ "canary",
  "hex",
  "keyring",
  "ratatui",

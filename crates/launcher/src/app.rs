@@ -72,6 +72,14 @@ pub const MENU: &[MenuEntry] = &[
             "from their public line. Verification needs no passphrase.",
         ],
     },
+    MenuEntry {
+        name: "CANARY",
+        tagline: "warrant canary",
+        about: &[
+            "Signed, dated, expiring statements — a dead-man switch in text.",
+            "Renew on schedule; an expired canary is the signal.",
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------- screens
@@ -207,6 +215,20 @@ pub const SIGN_MENU: &[&str] = &[
     "VERIFY   someone's signature",
 ];
 
+pub enum CanaryMode {
+    Menu(usize),
+    New(Form),
+    Renew(Form),
+    Check(Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const CANARY_MENU: &[&str] = &[
+    "NEW      sign a fresh canary statement",
+    "RENEW    re-sign an existing canary (sequence+1)",
+    "CHECK    verify someone's canary",
+];
+
 pub enum Screen {
     Home { selected: usize },
     Identities(IdentitiesState),
@@ -215,6 +237,7 @@ pub enum Screen {
     Scrub(ScrubMode),
     Split(SplitMode),
     Sign(SignMode),
+    Canary(CanaryMode),
 }
 
 // ---------------------------------------------------------------- pending ops
@@ -326,6 +349,7 @@ impl App {
             Screen::Scrub(_) => self.on_key_scrub(code),
             Screen::Split(_) => self.on_key_split(code),
             Screen::Sign(_) => self.on_key_sign(code),
+            Screen::Canary(_) => self.on_key_canary(code),
         }
     }
 
@@ -393,7 +417,8 @@ impl App {
                 vec![Field::new("file path")],
             ))),
             4 => Screen::Split(SplitMode::Menu(0)),
-            _ => Screen::Sign(SignMode::Menu(0)),
+            5 => Screen::Sign(SignMode::Menu(0)),
+            _ => Screen::Canary(CanaryMode::Menu(0)),
         }
     }
 
@@ -1167,6 +1192,101 @@ impl App {
         }
         if back_home {
             self.screen = Screen::Home { selected: 5 };
+        }
+    }
+
+    // ------------------------------------------------------------- canary
+
+    fn on_key_canary(&mut self, code: KeyCode) {
+        let first = self.first_identity();
+        let mut back_home = false;
+        {
+            let Gate::Open(session) = &self.gate else {
+                return;
+            };
+            let Screen::Canary(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                CanaryMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % CANARY_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(CANARY_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        *mode = match *sel {
+                            0 => CanaryMode::New(Form::new(
+                                "new canary",
+                                vec![
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("statement")
+                                        .with_placeholder("e.g. No warrants received as of today."),
+                                    Field::new("valid for (days)").with_value("30"),
+                                    Field::new("output file").with_value("canary.txt"),
+                                ],
+                            )),
+                            1 => CanaryMode::Renew(Form::new(
+                                "renew canary",
+                                vec![
+                                    Field::new("canary file").with_value("canary.txt"),
+                                    Field::new("identity").with_value(&first),
+                                    Field::new("valid for (days)").with_value("30"),
+                                ],
+                            )),
+                            _ => CanaryMode::Check(Form::new(
+                                "check a canary",
+                                vec![
+                                    Field::new("canary file"),
+                                    Field::new("previous canary (optional)")
+                                        .with_placeholder("detects rollback"),
+                                    Field::new("trusted .pub file (optional)")
+                                        .with_placeholder("pins the signer"),
+                                ],
+                            )),
+                        };
+                    }
+                    _ => {}
+                },
+                CanaryMode::New(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = CanaryMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match canary_new(session, form) {
+                        Ok(lines) => {
+                            *mode = CanaryMode::Results { title: "canary signed".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                CanaryMode::Renew(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = CanaryMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match canary_renew(session, form) {
+                        Ok(lines) => {
+                            *mode = CanaryMode::Results { title: "canary renewed".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                CanaryMode::Check(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = CanaryMode::Menu(2),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match canary_check(form) {
+                        Ok(lines) => {
+                            *mode = CanaryMode::Results { title: "canary status".into(), lines }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                CanaryMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = CanaryMode::Menu(0);
+                    }
+                }
+            }
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 6 };
         }
     }
 
@@ -2037,6 +2157,93 @@ fn verify_file(form: &Form) -> Result<Vec<String>> {
     }
 }
 
+fn canary_new(session: &Session, form: &Form) -> Result<Vec<String>> {
+    let identity = form.value(0);
+    let statement = form.value(1);
+    let days: u64 = form.value(2).trim().parse().map_err(|_| anyhow!("days must be a number"))?;
+    let out = form.value(3);
+    let kp = session
+        .store
+        .get(identity)
+        .ok_or_else(|| anyhow!("no identity named {identity:?}"))?;
+    let c = canary::Canary::issue(kp, statement, canary::now_unix(), days * 86_400, 1)?;
+    std::fs::write(out, c.render()).map_err(|e| anyhow!("writing {out}: {e}"))?;
+    Ok(vec![
+        format!("wrote {out}"),
+        format!("sequence 1, expires {}", canary::format_ts(c.expires)),
+        "publish it; renew before it expires — expiry is the signal.".into(),
+    ])
+}
+
+fn canary_renew(session: &Session, form: &Form) -> Result<Vec<String>> {
+    let path = form.value(0);
+    let identity = form.value(1);
+    let days: u64 = form.value(2).trim().parse().map_err(|_| anyhow!("days must be a number"))?;
+    let old = canary::Canary::parse(
+        &std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?,
+    )?;
+    old.verify()?;
+    let kp = session
+        .store
+        .get(identity)
+        .ok_or_else(|| anyhow!("no identity named {identity:?}"))?;
+    let c = old.renew(kp, canary::now_unix(), days * 86_400)?;
+    std::fs::write(path, c.render()).map_err(|e| anyhow!("writing {path}: {e}"))?;
+    Ok(vec![
+        format!("rewrote {path}"),
+        format!("sequence {} -> {}", old.sequence, c.sequence),
+        format!("expires {}", canary::format_ts(c.expires)),
+    ])
+}
+
+fn canary_check(form: &Form) -> Result<Vec<String>> {
+    let path = form.value(0);
+    let c = canary::Canary::parse(
+        &std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?,
+    )?;
+
+    let pub_path = form.value(2);
+    if !pub_path.trim().is_empty() {
+        let trusted = keyring::PublicIdentity::parse(
+            &std::fs::read_to_string(pub_path).map_err(|e| anyhow!("reading {pub_path}: {e}"))?,
+        )?;
+        if trusted.ed != c.identity.ed {
+            return Ok(vec!["BAD: signed by a different key than the trusted .pub".into()]);
+        }
+    }
+    if c.verify().is_err() {
+        return Ok(vec!["BAD: signature does not verify".into()]);
+    }
+    let prev_path = form.value(1);
+    if !prev_path.trim().is_empty() {
+        let prev = canary::Canary::parse(
+            &std::fs::read_to_string(prev_path)
+                .map_err(|e| anyhow!("reading {prev_path}: {e}"))?,
+        )?;
+        prev.verify()?;
+        if let Err(e) = c.check_succession(&prev) {
+            return Ok(vec![format!("BAD: {e}")]);
+        }
+    }
+
+    let mut lines = vec![
+        format!("signer:   {} [{}]", c.identity.name, c.identity.fingerprint()),
+        format!("sequence: {}", c.sequence),
+        format!("issued:   {}", canary::format_ts(c.issued)),
+        format!("expires:  {}", canary::format_ts(c.expires)),
+    ];
+    lines.push(match c.status(canary::now_unix()) {
+        canary::Status::Valid { remaining } => {
+            format!("status:   ALIVE ({} remaining)", canary::format_duration(remaining))
+        }
+        canary::Status::Expired { overdue } => format!(
+            "status:   EXPIRED ({} overdue) — treat as tripped",
+            canary::format_duration(overdue)
+        ),
+    });
+    Ok(lines)
+}
+
 // ---------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -2111,6 +2318,81 @@ mod tests {
         app.on_key(KeyCode::Enter);
         assert!(matches!(app.gate, Gate::Open(_)));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn canary_issue_renew_check_flow() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let dir = std::env::temp_dir().join(format!("canary-tui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("canary.txt");
+        let out_s = out.to_string_lossy().to_string();
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "ops");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+
+        // NEW: identity prefilled; statement, days prefilled, output path.
+        app.on_key(KeyCode::Char('7'));
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::Canary(CanaryMode::Menu(0))));
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // keep identity
+        type_str(&mut app, "no warrants received");
+        app.on_key(KeyCode::Enter); // keep days=30
+        app.on_key(KeyCode::Enter); // to output field
+        if let Screen::Canary(CanaryMode::New(f)) = &mut app.screen {
+            f.fields[3].value = out_s.clone();
+        }
+        app.on_key(KeyCode::Enter); // submit
+        assert!(
+            matches!(&app.screen, Screen::Canary(CanaryMode::Results { .. })),
+            "issue should land on results"
+        );
+        assert!(out.exists());
+        app.on_key(KeyCode::Esc);
+
+        // RENEW: sequence 1 -> 2, same file.
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter);
+        if let Screen::Canary(CanaryMode::Renew(f)) = &mut app.screen {
+            f.fields[0].value = out_s.clone();
+        }
+        app.on_key(KeyCode::Enter); // file
+        app.on_key(KeyCode::Enter); // identity
+        app.on_key(KeyCode::Enter); // days -> submit
+        match &app.screen {
+            Screen::Canary(CanaryMode::Results { lines, .. }) => {
+                assert!(lines.iter().any(|l| l.contains("1 -> 2")), "{lines:?}")
+            }
+            _ => panic!("renew should land on results"),
+        }
+        app.on_key(KeyCode::Esc);
+
+        // CHECK: ALIVE, sequence 2.
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter);
+        if let Screen::Canary(CanaryMode::Check(f)) = &mut app.screen {
+            f.fields[0].value = out_s.clone();
+        }
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // submit (optional fields empty)
+        match &app.screen {
+            Screen::Canary(CanaryMode::Results { lines, .. }) => {
+                assert!(lines.iter().any(|l| l.contains("ALIVE")), "{lines:?}");
+                assert!(lines.iter().any(|l| l.contains("sequence: 2")), "{lines:?}");
+            }
+            _ => panic!("check should land on results"),
+        }
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
     }
 
     #[test]
