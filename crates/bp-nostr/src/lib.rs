@@ -19,6 +19,7 @@ pub mod nip04;
 pub mod nip19;
 pub mod nip44;
 pub mod nip46;
+pub mod pairings;
 pub mod profile;
 pub mod relay;
 

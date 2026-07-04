@@ -148,6 +148,10 @@ the client's connection key and the signer. Modern clients (ditto.pub) use
 accepts legacy NIP-04 and replies in whichever scheme the client used. A client must `connect`
 with the URL's secret before any signing is honored (connect-then-sign); the
 `secret` in the URL is the authorization, so treat the URL like a password.
+Pairings persist: once a client has connected, its pubkey is recorded in
+`~/.config/backpack/bunker-pairings.txt` and stays authorized across signer
+restarts (clients only send `connect` once, at pairing time). Revoke a
+client by deleting its line from that file and restarting the signer.
 Supported methods: connect, ping, get_public_key, get_relays, sign_event,
 nip04_encrypt/decrypt, nip44_encrypt/decrypt. The signer runs while the SIGNER screen (or `bunker` command) is open and
 logs each request; closing it stops signing.

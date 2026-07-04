@@ -289,6 +289,7 @@ dependencies = [
  "cbc",
  "chacha20",
  "clap",
+ "directories",
  "hex",
  "hkdf",
  "hmac",

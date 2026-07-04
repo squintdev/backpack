@@ -636,7 +636,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A log line emitted by the running signer.
 pub struct SignerLog {
+    /// Shortened client pubkey, for display.
     pub client: String,
+    /// Full client pubkey hex — callers persisting pairings need this.
+    pub client_pubkey: String,
     pub method: String,
     pub outcome: String,
 }
@@ -673,12 +676,18 @@ pub fn run_signer_multi(
     signer_sk: &[u8; 32],
     secret: &str,
     stop: &AtomicBool,
+    preauthorized: &[String],
     on_log: impl Fn(SignerLog) + Send + Sync,
 ) -> IoResult<()> {
     if relays.is_empty() {
         return Err("no relays".into());
     }
     let shared = SignerShared::default();
+    shared
+        .authorized
+        .lock()
+        .unwrap()
+        .extend(preauthorized.iter().cloned());
     std::thread::scope(|scope| {
         for relay in relays {
             let shared = &shared;
@@ -690,6 +699,7 @@ pub fn run_signer_multi(
                         Err(e) => {
                             on_log(SignerLog {
                                 client: relay.clone(),
+                                client_pubkey: String::new(),
                                 method: "(relay)".into(),
                                 outcome: format!("{e}; retrying in 5s"),
                             });
@@ -797,6 +807,7 @@ fn signer_connection(
                 Err(_) => {
                     on_log(SignerLog {
                         client: short_pk(&client),
+                        client_pubkey: client.clone(),
                         method: "(unreadable)".into(),
                         outcome: "decrypt failed".into(),
                     });
@@ -828,6 +839,7 @@ fn signer_connection(
 
         on_log(SignerLog {
             client: short_pk(&client),
+            client_pubkey: client.clone(),
             method: req.method.clone(),
             outcome: match &response.error {
                 Some(e) => format!("error: {e}"),
