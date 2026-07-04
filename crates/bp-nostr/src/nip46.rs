@@ -98,11 +98,12 @@ impl Response {
 }
 
 /// Build a `bunker://` connection URL for a client to paste into its login box.
-pub fn bunker_url(signer_pubkey_hex: &str, relay: &str, secret: &str) -> String {
-    format!(
-        "bunker://{signer_pubkey_hex}?relay={}&secret={secret}",
-        urlencode(relay)
-    )
+pub fn bunker_url(signer_pubkey_hex: &str, relays: &[String], secret: &str) -> String {
+    let relay_params: String = relays
+        .iter()
+        .map(|r| format!("relay={}&", urlencode(r)))
+        .collect();
+    format!("bunker://{signer_pubkey_hex}?{relay_params}secret={secret}")
 }
 
 fn urlencode(s: &str) -> String {
@@ -253,11 +254,20 @@ mod tests {
     const SK: [u8; 32] = [9u8; 32];
 
     #[test]
-    fn bunker_url_encodes_relay() {
-        let url = bunker_url("deadbeef", "wss://relay.damus.io", "s3cret");
+    fn bunker_url_encodes_relays() {
+        let url = bunker_url("deadbeef", &["wss://relay.damus.io".to_string()], "s3cret");
         assert_eq!(
             url,
             "bunker://deadbeef?relay=wss%3A%2F%2Frelay.damus.io&secret=s3cret"
+        );
+        let url = bunker_url(
+            "deadbeef",
+            &["wss://a.example".to_string(), "wss://b.example".to_string()],
+            "s",
+        );
+        assert_eq!(
+            url,
+            "bunker://deadbeef?relay=wss%3A%2F%2Fa.example&relay=wss%3A%2F%2Fb.example&secret=s"
         );
     }
 
