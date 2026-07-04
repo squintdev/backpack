@@ -1,0 +1,24 @@
+[package]
+name = "sats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin Bitcoin spending client: HD addresses, balance, history, send"
+
+[[bin]]
+name = "sats"
+path = "src/main.rs"
+
+[dependencies]
+bitcoin = { workspace = true }
+keyring = { workspace = true }
+ureq = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+rpassword = { workspace = true }
+zeroize = { workspace = true }
+hex = { workspace = true }

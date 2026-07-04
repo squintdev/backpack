@@ -17,6 +17,7 @@ keyring = { workspace = true }
 bp-nostr = { path = "../bp-nostr" }
 canary = { path = "../canary" }
 stamp = { path = "../stamp" }
+sats = { path = "../sats" }
 veil = { path = "../veil" }
 scrub = { path = "../scrub" }
 split = { path = "../split" }

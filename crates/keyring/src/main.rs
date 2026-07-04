@@ -65,6 +65,8 @@ enum Cmd {
     Rm { name: String },
     /// Add a Nostr key to an identity created before Nostr support.
     NostrInit { name: String },
+    /// Add a Bitcoin seed to an identity created before Bitcoin support.
+    BtcInit { name: String },
     /// Sign a file (or stdin) with an identity's signing key.
     Sign {
         #[arg(short, long)]
@@ -95,6 +97,7 @@ fn run() -> Result<()> {
         Cmd::Export { name } => cmd_export(&cli, name),
         Cmd::Rm { name } => cmd_rm(&cli, name),
         Cmd::NostrInit { name } => cmd_nostr_init(&cli, name),
+        Cmd::BtcInit { name } => cmd_btc_init(&cli, name),
         Cmd::Sign { key, input } => cmd_sign(&cli, key, input.as_ref()),
         Cmd::Verify {
             pubfile,
@@ -167,6 +170,19 @@ fn cmd_nostr_init(cli: &Cli, name: &str) -> Result<()> {
         println!("added Nostr key to {name}");
     } else {
         println!("{name} already has a Nostr key");
+    }
+    Ok(())
+}
+
+fn cmd_btc_init(cli: &Cli, name: &str) -> Result<()> {
+    let path = store_path(cli)?;
+    let pass = passphrase(false)?;
+    let mut store = KeyStore::open(&path, pass.as_bytes())?;
+    if store.btc_init(name)? {
+        store.save(pass.as_bytes())?;
+        println!("added Bitcoin seed to {name}");
+    } else {
+        println!("{name} already has a Bitcoin seed");
     }
     Ok(())
 }
