@@ -1,0 +1,22 @@
+[package]
+name = "stamp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Timestamp proofs: OpenTimestamps-compatible Bitcoin anchoring"
+
+[[bin]]
+name = "stamp"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = { workspace = true }
+hex = { workspace = true }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+ureq = { workspace = true }
+ripemd = { workspace = true }
+sha1 = { workspace = true }

@@ -80,6 +80,14 @@ pub const MENU: &[MenuEntry] = &[
             "Renew on schedule; an expired canary is the signal.",
         ],
     },
+    MenuEntry {
+        name: "STAMP",
+        tagline: "timestamp proofs",
+        about: &[
+            "Prove a file existed at a point in time — Bitcoin-anchored",
+            "via OpenTimestamps. Calendars only ever see a blinded hash.",
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------- screens
@@ -248,6 +256,22 @@ pub const CANARY_MENU: &[&str] = &[
     "CHECK    verify someone's canary",
 ];
 
+pub enum StampMode {
+    Menu(usize),
+    Stamp(Form),
+    Upgrade(Form),
+    Verify(Form),
+    Info(Form),
+    Results { title: String, lines: Vec<String> },
+}
+
+pub const STAMP_MENU: &[&str] = &[
+    "STAMP    submit a file's blinded hash to calendars",
+    "UPGRADE  fetch the Bitcoin attestation (hours later)",
+    "VERIFY   check a file against its .ots proof",
+    "INFO     show a proof's attestations",
+];
+
 pub enum Screen {
     Home { selected: usize },
     Identities(IdentitiesState),
@@ -257,6 +281,7 @@ pub enum Screen {
     Split(SplitMode),
     Sign(SignMode),
     Canary(CanaryMode),
+    Stamp(StampMode),
 }
 
 // ---------------------------------------------------------------- pending ops
@@ -312,6 +337,17 @@ pub enum Pending {
     },
     NostrSignerStart {
         identity: String,
+    },
+    StampFile {
+        file: String,
+    },
+    StampUpgrade {
+        proof: String,
+    },
+    StampVerify {
+        file: String,
+        proof: String,
+        offline: bool,
     },
     VeilEncPass {
         input: String,
@@ -431,6 +467,7 @@ impl App {
             Screen::Split(_) => self.on_key_split(code),
             Screen::Sign(_) => self.on_key_sign(code),
             Screen::Canary(_) => self.on_key_canary(code),
+            Screen::Stamp(_) => self.on_key_stamp(code),
         }
     }
 
@@ -499,7 +536,8 @@ impl App {
             ))),
             4 => Screen::Split(SplitMode::Menu(0)),
             5 => Screen::Sign(SignMode::Menu(0)),
-            _ => Screen::Canary(CanaryMode::Menu(0)),
+            6 => Screen::Canary(CanaryMode::Menu(0)),
+            _ => Screen::Stamp(StampMode::Menu(0)),
         }
     }
 
@@ -1417,6 +1455,104 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------- stamp
+
+    fn on_key_stamp(&mut self, code: KeyCode) {
+        let mut back_home = false;
+        let mut queue: Option<Pending> = None;
+        {
+            let Screen::Stamp(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                StampMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % STAMP_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(STAMP_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        *mode = match *sel {
+                            0 => StampMode::Stamp(Form::new(
+                                "stamp a file",
+                                vec![Field::new("file path")],
+                            )),
+                            1 => StampMode::Upgrade(Form::new(
+                                "upgrade a proof",
+                                vec![Field::new("proof file (.ots)")],
+                            )),
+                            2 => StampMode::Verify(Form::new(
+                                "verify a file",
+                                vec![
+                                    Field::new("file path"),
+                                    Field::new("proof file (blank: <file>.ots)"),
+                                ],
+                            )),
+                            _ => StampMode::Info(Form::new(
+                                "inspect a proof",
+                                vec![Field::new("proof file (.ots)")],
+                            )),
+                        };
+                    }
+                    _ => {}
+                },
+                StampMode::Stamp(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = StampMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::StampFile {
+                            file: form.value(0).to_string(),
+                        })
+                    }
+                },
+                StampMode::Upgrade(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = StampMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::StampUpgrade {
+                            proof: form.value(0).to_string(),
+                        })
+                    }
+                },
+                StampMode::Verify(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = StampMode::Menu(2),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::StampVerify {
+                            file: form.value(0).to_string(),
+                            proof: form.value(1).to_string(),
+                            offline: false,
+                        })
+                    }
+                },
+                StampMode::Info(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = StampMode::Menu(3),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match stamp_info(form.value(0)) {
+                        Ok(lines) => {
+                            *mode = StampMode::Results {
+                                title: "proof".into(),
+                                lines,
+                            }
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
+                },
+                StampMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = StampMode::Menu(0);
+                    }
+                }
+            }
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 7 };
+        }
+        if queue.is_some() {
+            self.pending = queue;
+        }
+    }
+
     // ------------------------------------------------------------- pending
 
     /// Execute a queued slow operation (the main loop calls this after
@@ -1637,6 +1773,55 @@ impl App {
                         lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
                         copy: None,
                         scroll: 0,
+                    };
+                }
+            }
+            Pending::StampFile { file } => {
+                let result = stamp_file(&file);
+                if let Screen::Stamp(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(lines) => StampMode::Results {
+                            title: "stamped".into(),
+                            lines,
+                        },
+                        Err(e) => StampMode::Results {
+                            title: "stamp".into(),
+                            lines: vec![format!("failed: {e}")],
+                        },
+                    };
+                }
+            }
+            Pending::StampUpgrade { proof } => {
+                let result = stamp_upgrade(&proof);
+                if let Screen::Stamp(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(lines) => StampMode::Results {
+                            title: "upgrade".into(),
+                            lines,
+                        },
+                        Err(e) => StampMode::Results {
+                            title: "upgrade".into(),
+                            lines: vec![format!("failed: {e}")],
+                        },
+                    };
+                }
+            }
+            Pending::StampVerify {
+                file,
+                proof,
+                offline,
+            } => {
+                let result = stamp_verify(&file, &proof, offline);
+                if let Screen::Stamp(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok(lines) => StampMode::Results {
+                            title: "verification".into(),
+                            lines,
+                        },
+                        Err(e) => StampMode::Results {
+                            title: "verification".into(),
+                            lines: vec![format!("failed: {e}")],
+                        },
                     };
                 }
             }
@@ -2435,6 +2620,103 @@ fn canary_check(form: &Form) -> Result<Vec<String>> {
     Ok(lines)
 }
 
+fn stamp_digest_of(path: &str) -> Result<[u8; 32]> {
+    let mut f = std::fs::File::open(path).map_err(|e| anyhow!("reading {path}: {e}"))?;
+    Ok(stamp::digest_reader(&mut f)?)
+}
+
+fn stamp_proof_path(file: &str, proof: &str) -> String {
+    if proof.trim().is_empty() {
+        format!("{file}.ots")
+    } else {
+        proof.to_string()
+    }
+}
+
+fn stamp_file(file: &str) -> Result<Vec<String>> {
+    let digest = stamp_digest_of(file)?;
+    let (proof, outcomes) = stamp::stamp(digest, stamp::calendar::DEFAULT_CALENDARS);
+    let mut lines = vec![format!("sha256 {}", hex::encode(digest))];
+    for (cal, r) in &outcomes {
+        lines.push(match r {
+            Ok(()) => format!("ok   {cal}"),
+            Err(e) => format!("FAIL {e}"),
+        });
+    }
+    let proof = proof?;
+    let out = format!("{file}.ots");
+    std::fs::write(&out, proof.serialize()?).map_err(|e| anyhow!("writing {out}: {e}"))?;
+    lines.push(format!("wrote {out}"));
+    lines.push("pending — UPGRADE in a few hours for the Bitcoin attestation".into());
+    Ok(lines)
+}
+
+fn stamp_upgrade(proof_path: &str) -> Result<Vec<String>> {
+    let mut proof = stamp::Proof::deserialize(
+        &std::fs::read(proof_path).map_err(|e| anyhow!("reading {proof_path}: {e}"))?,
+    )?;
+    let (upgraded, remaining) = stamp::upgrade(&mut proof)?;
+    if upgraded > 0 {
+        std::fs::write(proof_path, proof.serialize()?)
+            .map_err(|e| anyhow!("writing {proof_path}: {e}"))?;
+    }
+    let mut lines = vec![format!("upgraded {upgraded}, still pending {remaining}")];
+    if remaining > 0 {
+        lines.push("calendars anchor to Bitcoin every few hours — try again later".into());
+    }
+    Ok(lines)
+}
+
+fn stamp_verify(file: &str, proof: &str, offline: bool) -> Result<Vec<String>> {
+    let proof_path = stamp_proof_path(file, proof);
+    let parsed = stamp::Proof::deserialize(
+        &std::fs::read(&proof_path).map_err(|e| anyhow!("reading {proof_path}: {e}"))?,
+    )?;
+    let digest = stamp_digest_of(file)?;
+    let esplora = if offline {
+        None
+    } else {
+        Some(stamp::calendar::DEFAULT_ESPLORA)
+    };
+    let mut lines = Vec::new();
+    for c in stamp::verify(&parsed, digest, esplora)? {
+        lines.push(match c {
+            stamp::Check::BitcoinVerified { height, block_time } => format!(
+                "OK: existed by {} (Bitcoin block {height})",
+                canary::format_ts(block_time)
+            ),
+            stamp::Check::BitcoinMismatch { height } => {
+                format!("BAD: does not match block {height} merkle root")
+            }
+            stamp::Check::BitcoinUnchecked { height } => {
+                format!("bitcoin attestation, block {height} (unchecked: offline)")
+            }
+            stamp::Check::Pending { uri } => format!("pending at {uri} — run UPGRADE"),
+            stamp::Check::Unknown => "unknown attestation type (skipped)".into(),
+        });
+    }
+    Ok(lines)
+}
+
+fn stamp_info(proof_path: &str) -> Result<Vec<String>> {
+    let proof = stamp::Proof::deserialize(
+        &std::fs::read(proof_path).map_err(|e| anyhow!("reading {proof_path}: {e}"))?,
+    )?;
+    let mut lines = vec![format!("file sha256 {}", hex::encode(proof.digest))];
+    for (msg, att) in proof.timestamp.walk(&proof.digest)? {
+        lines.push(match att {
+            stamp::Attestation::Bitcoin { height } => {
+                format!("bitcoin block {height} (merkle root {})", hex::encode(&msg))
+            }
+            stamp::Attestation::Pending { uri } => format!("pending at {uri}"),
+            stamp::Attestation::Unknown { tag, .. } => {
+                format!("unknown attestation {}", hex::encode(tag))
+            }
+        });
+    }
+    Ok(lines)
+}
+
 // ---------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -2506,6 +2788,65 @@ mod tests {
         app.on_key(KeyCode::Enter);
         assert!(matches!(app.gate, Gate::Open(_)));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn stamp_screen_info_and_offline_verify() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let dir = std::env::temp_dir().join(format!("stamp-tui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("doc.txt");
+        std::fs::write(&file, b"stamped content").unwrap();
+
+        // Craft a proof with a bitcoin attestation, no network needed.
+        let digest = {
+            let mut f = std::fs::File::open(&file).unwrap();
+            stamp::digest_reader(&mut f).unwrap()
+        };
+        let proof = stamp::Proof {
+            digest,
+            timestamp: stamp::Timestamp {
+                attestations: vec![stamp::Attestation::Bitcoin { height: 424242 }],
+                ops: vec![],
+            },
+        };
+        let ots = dir.join("doc.txt.ots");
+        std::fs::write(&ots, proof.serialize().unwrap()).unwrap();
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('8'));
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::Stamp(StampMode::Menu(0))));
+
+        // INFO reads the proof directly (no pending op).
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter);
+        if let Screen::Stamp(StampMode::Info(f)) = &mut app.screen {
+            f.fields[0].value = ots.to_string_lossy().to_string();
+        }
+        app.on_key(KeyCode::Enter);
+        match &app.screen {
+            Screen::Stamp(StampMode::Results { lines, .. }) => {
+                assert!(
+                    lines.iter().any(|l| l.contains("bitcoin block 424242")),
+                    "{lines:?}"
+                );
+            }
+            _ => panic!("info should land on results"),
+        }
+
+        // Offline verify via the helper (the screen path queues a network op).
+        let lines = stamp_verify(&file.to_string_lossy(), "", true).unwrap();
+        assert!(
+            lines.iter().any(|l| l.contains("block 424242")),
+            "{lines:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
     }
 
     #[test]

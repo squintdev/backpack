@@ -27,6 +27,7 @@ backpack/
     ├── split/            Shamir secret sharing CLI (lib + bin)
     ├── keyring/          Ed25519/X25519/secp256k1 identity manager (lib + bin + TUI)
     ├── canary/           warrant canary: signed, expiring statements (lib + bin)
+    ├── stamp/            timestamp proofs, OpenTimestamps-compatible (lib + bin)
     ├── bp-nostr/         `nostr` minimal Nostr client (NIP-01)
     └── launcher/         `backpack` boot menu TUI (cyberdeck entry point)
 ```
@@ -172,6 +173,23 @@ detects rollback against the previously seen canary, and exits 2 on expiry so
 scripts can alarm. The whole canary is one copy-pasteable text document. See
 [docs/canary.md](docs/canary.md).
 
+### `stamp` — timestamp proofs
+
+Prove a file existed at a point in time — without revealing it. An
+OpenTimestamps client: your file's hash is blinded with a nonce, aggregated
+by public calendar servers, and anchored in a Bitcoin block. Proofs are
+standard `.ots` files, interoperable with all OTS tools.
+
+```sh
+stamp report.pdf                 # -> report.pdf.ots (pending)
+stamp upgrade report.pdf.ots     # hours later: Bitcoin attestation
+stamp verify report.pdf          # OK: existed by <time> (Bitcoin block N)
+```
+
+Verification checks the proof against the block's merkle root (via Esplora;
+`--esplora` for your own node, `--offline` to skip network). See
+[docs/stamp.md](docs/stamp.md).
+
 ### `nostr` — Nostr client
 
 Publish and read notes on Nostr — decentralized, censorship-resistant
@@ -195,7 +213,7 @@ Every fetched event is signature-verified before display. Relays come from
 ### `backpack` — the TUI client
 
 The suite as one full-screen client: the keystore unlocks via an in-TUI masked
-prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify, canary —
+prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify, canary, stamp —
 is a native screen with forms and results panes. No shelling out. `!` drops to
 a real shell when you need one. Designed as the auto-start entry point for a
 terminal-only cyberdeck — amber phosphor monochrome, renders on the bare Linux

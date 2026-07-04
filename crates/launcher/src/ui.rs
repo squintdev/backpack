@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::app::{
-    App, CanaryMode, Gate, IdMode, NostrMode, Screen, ScrubMode, SignMode, SplitMode, VeilMode,
-    CANARY_MENU, MENU, NOSTR_MENU, SIGN_MENU, SPLIT_MENU, VEIL_MENU,
+    App, CanaryMode, Gate, IdMode, NostrMode, Screen, ScrubMode, SignMode, SplitMode, StampMode,
+    VeilMode, CANARY_MENU, MENU, NOSTR_MENU, SIGN_MENU, SPLIT_MENU, STAMP_MENU, VEIL_MENU,
 };
 use crate::form::Form;
 use crate::session::Session;
@@ -108,6 +108,10 @@ pub fn render(f: &mut Frame, app: &App) {
                     root[2],
                     generic_keys(matches!(mode, CanaryMode::Menu(_))),
                 );
+            }
+            Screen::Stamp(mode) => {
+                render_stamp(f, root[1], mode);
+                render_keybar(f, root[2], generic_keys(matches!(mode, StampMode::Menu(_))));
             }
         },
     }
@@ -667,6 +671,17 @@ fn render_canary(f: &mut Frame, area: Rect, mode: &CanaryMode) {
             render_form_page(f, area, form)
         }
         CanaryMode::Results { title, lines } => render_lines(f, area, title, lines),
+    }
+}
+
+fn render_stamp(f: &mut Frame, area: Rect, mode: &StampMode) {
+    match mode {
+        StampMode::Menu(sel) => render_submenu(f, area, " ▞▞ STAMP ", STAMP_MENU, *sel),
+        StampMode::Stamp(form)
+        | StampMode::Upgrade(form)
+        | StampMode::Verify(form)
+        | StampMode::Info(form) => render_form_page(f, area, form),
+        StampMode::Results { title, lines } => render_lines(f, area, title, lines),
     }
 }
 

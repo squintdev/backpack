@@ -7,6 +7,7 @@ members = [
     "crates/split",
     "crates/keyring",
     "crates/canary",
+    "crates/stamp",
     "crates/launcher",
     "crates/bp-nostr",
 ]
@@ -57,3 +58,6 @@ cbc = { version = "0.1", features = ["alloc"] }
 chacha20 = "0.9"
 hmac = "0.12"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }
+ripemd = "0.1"
+sha1 = "0.10"
