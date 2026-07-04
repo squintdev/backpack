@@ -38,15 +38,8 @@ pub fn event_id(
     tags: &[Vec<String>],
     content: &str,
 ) -> Result<[u8; 32]> {
-    let canonical = serde_json::to_string(&(
-        0u8,
-        pubkey,
-        created_at,
-        kind,
-        tags,
-        content,
-    ))
-    .map_err(|_| Error::Serialize)?;
+    let canonical = serde_json::to_string(&(0u8, pubkey, created_at, kind, tags, content))
+        .map_err(|_| Error::Serialize)?;
     Ok(Sha256::digest(canonical.as_bytes()).into())
 }
 
@@ -66,9 +59,7 @@ pub fn sign_event(
     // BIP340 with fresh auxiliary randomness.
     let mut aux = [0u8; 32];
     OsRng.fill_bytes(&mut aux);
-    let sig = sk
-        .sign_raw(&id, &aux)
-        .map_err(|_| Error::BadSignature)?;
+    let sig = sk.sign_raw(&id, &aux).map_err(|_| Error::BadSignature)?;
 
     Ok(Event {
         id: hex::encode(id),
@@ -93,7 +84,8 @@ pub fn verify_event(ev: &Event) -> Result<()> {
     let vk = VerifyingKey::from_bytes(&pk_bytes).map_err(|_| Error::BadPubkey)?;
     let sig_bytes = hex::decode(&ev.sig).map_err(|_| Error::BadSignature)?;
     let sig = Signature::try_from(sig_bytes.as_slice()).map_err(|_| Error::BadSignature)?;
-    vk.verify_prehash(&id, &sig).map_err(|_| Error::BadSignature)
+    vk.verify_prehash(&id, &sig)
+        .map_err(|_| Error::BadSignature)
 }
 
 #[cfg(test)]
@@ -138,7 +130,14 @@ mod tests {
     #[test]
     fn tags_are_part_of_the_id() {
         let a = sign_event(&SK, 1, 1, vec![], "x".into()).unwrap();
-        let b = sign_event(&SK, 1, 1, vec![vec!["t".into(), "topic".into()]], "x".into()).unwrap();
+        let b = sign_event(
+            &SK,
+            1,
+            1,
+            vec![vec!["t".into(), "topic".into()]],
+            "x".into(),
+        )
+        .unwrap();
         assert_ne!(a.id, b.id);
     }
 

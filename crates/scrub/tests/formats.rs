@@ -14,7 +14,10 @@ fn jpeg_comment_removed() {
 
     let (out, report) = strip(input).unwrap();
     assert!(report.changed());
-    assert!(!contains(&out, b"SECRET-safehouse-42.3601N"), "comment survived");
+    assert!(
+        !contains(&out, b"SECRET-safehouse-42.3601N"),
+        "comment survived"
+    );
 
     // A second pass finds nothing, and the JPEG is still structurally valid.
     let (_, report2) = strip(&out).unwrap();
@@ -29,7 +32,10 @@ fn png_text_removed() {
 
     let (out, report) = strip(input).unwrap();
     assert!(report.changed());
-    assert!(!contains(&out, b"internal-eyes-only"), "text chunk survived");
+    assert!(
+        !contains(&out, b"internal-eyes-only"),
+        "text chunk survived"
+    );
 
     let (_, report2) = strip(&out).unwrap();
     assert!(!report2.changed());

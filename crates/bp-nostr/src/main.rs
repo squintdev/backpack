@@ -12,13 +12,16 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use zeroize::Zeroizing;
 
-use bp_nostr::client::{fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays, run_signer, send_dm, set_profile, suggest_follows};
-use std::sync::atomic::AtomicBool;
-use bp_nostr::profile::{field, KNOWN_FIELDS};
+use bp_nostr::client::{
+    fetch, fetch_dms, fetch_profiles, fetch_timeline, latest_profile, publish, resolve_relays,
+    run_signer, send_dm, set_profile, suggest_follows,
+};
 use bp_nostr::contacts::Contact;
 use bp_nostr::event::{pubkey_hex, sign_event, Event, KIND_TEXT_NOTE};
 use bp_nostr::nip19::{npub_encode, nsec_encode, pubkey_to_hex};
+use bp_nostr::profile::{field, KNOWN_FIELDS};
 use bp_nostr::relay::Filter;
+use std::sync::atomic::AtomicBool;
 
 /// Keystore passphrase environment variable (shared across the suite).
 const PASS_ENV: &str = "BACKPACK_PASSPHRASE";
@@ -173,21 +176,36 @@ fn run() -> Result<()> {
         Cmd::Whoami { identity } => whoami(identity),
         Cmd::Post { identity, text } => post(identity, text, &relays),
         Cmd::Fetch { author, limit } => run_fetch(author, *limit, &relays),
-        Cmd::Follow { identity, author, name } => {
-            run_follow(identity, author, name.clone(), &relays)
-        }
+        Cmd::Follow {
+            identity,
+            author,
+            name,
+        } => run_follow(identity, author, name.clone(), &relays),
         Cmd::Unfollow { identity, author } => run_unfollow(identity, author, &relays),
         Cmd::Follows { identity } => run_follows(identity, &relays),
         Cmd::Timeline { identity, limit } => run_timeline(identity, *limit, &relays),
-        Cmd::Profile { identity, author } => run_profile(identity.as_deref(), author.as_deref(), &relays),
+        Cmd::Profile { identity, author } => {
+            run_profile(identity.as_deref(), author.as_deref(), &relays)
+        }
         Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
         Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
         Cmd::Explore { identity, limit } => run_explore(identity, *limit, &relays),
         Cmd::Bunker { identity } => run_bunker(identity, &relays),
         Cmd::ExportKey { identity, yes } => run_export_key(identity, *yes),
-        Cmd::SetProfile { identity, name, about, picture, nip05 } => run_set_profile(
+        Cmd::SetProfile {
             identity,
-            &[("name", name), ("about", about), ("picture", picture), ("nip05", nip05)],
+            name,
+            about,
+            picture,
+            nip05,
+        } => run_set_profile(
+            identity,
+            &[
+                ("name", name),
+                ("about", about),
+                ("picture", picture),
+                ("nip05", nip05),
+            ],
             &relays,
         ),
     }
@@ -286,14 +304,20 @@ fn run_explore(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
     }
     for s in &suggestions {
         let pk: [u8; 32] = hex::decode(&s.pubkey).unwrap().try_into().unwrap();
-        let name = s.name.clone().unwrap_or_else(|| format!("{}…", &s.pubkey[..12]));
+        let name = s
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("{}…", &s.pubkey[..12]));
         println!("[{:>2}] {:<24} {}", s.score, name, npub_encode(&pk));
         if let Some(about) = &s.about {
             let short: String = about.chars().take(70).collect();
             println!("     {short}");
         }
     }
-    eprintln!("({} suggestions — nostr follow --identity {identity} <npub>)", suggestions.len());
+    eprintln!(
+        "({} suggestions — nostr follow --identity {identity} <npub>)",
+        suggestions.len()
+    );
     Ok(())
 }
 
@@ -323,7 +347,14 @@ fn run_profile(identity: Option<&str>, author: Option<&str>, relays: &[String]) 
         .filter(|k| !KNOWN_FIELDS.contains(&k.as_str()))
         .collect();
     if !extra.is_empty() {
-        println!("(other fields preserved: {})", extra.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
+        println!(
+            "(other fields preserved: {})",
+            extra
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     Ok(())
 }
@@ -346,12 +377,7 @@ fn run_set_profile(
     Ok(())
 }
 
-fn run_follow(
-    identity: &str,
-    author: &str,
-    name: Option<String>,
-    relays: &[String],
-) -> Result<()> {
+fn run_follow(identity: &str, author: &str, name: Option<String>, relays: &[String]) -> Result<()> {
     let sk = load_nostr_key(identity)?;
     let target = pubkey_to_hex(author)?;
     let count = bp_nostr::client::follow(relays, &sk, &target, name).map_err(|e| anyhow!(e))?;
@@ -409,7 +435,11 @@ fn run_timeline(identity: &str, limit: u32, relays: &[String]) -> Result<()> {
             println!("   {line}");
         }
     }
-    eprintln!("({} notes, {} follows, signatures verified)", events.len(), contacts.len());
+    eprintln!(
+        "({} notes, {} follows, signatures verified)",
+        events.len(),
+        contacts.len()
+    );
     Ok(())
 }
 
@@ -451,7 +481,11 @@ fn post(identity: &str, text: &str, relays: &[String]) -> Result<()> {
                 accepted += 1;
                 println!(
                     "  {url}: accepted{}",
-                    if msg.is_empty() { String::new() } else { format!(" ({msg})") }
+                    if msg.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({msg})")
+                    }
                 );
             }
             Err(e) => eprintln!("  {url}: {e}"),

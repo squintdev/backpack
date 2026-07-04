@@ -63,20 +63,24 @@ pub fn parse(text: &str) -> RelayMsg {
         return RelayMsg::Other;
     };
     match arr.first().and_then(Value::as_str) {
-        Some("EVENT") if arr.len() >= 3 => {
-            match serde_json::from_value::<Event>(arr[2].clone()) {
-                Ok(ev) => RelayMsg::Event(Box::new(ev)),
-                Err(_) => RelayMsg::Other,
-            }
-        }
+        Some("EVENT") if arr.len() >= 3 => match serde_json::from_value::<Event>(arr[2].clone()) {
+            Ok(ev) => RelayMsg::Event(Box::new(ev)),
+            Err(_) => RelayMsg::Other,
+        },
         Some("EOSE") => RelayMsg::Eose,
         Some("OK") if arr.len() >= 3 => RelayMsg::Ok(
             arr[1].as_str().unwrap_or_default().to_string(),
             arr[2].as_bool().unwrap_or(false),
-            arr.get(3).and_then(Value::as_str).unwrap_or_default().to_string(),
+            arr.get(3)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         ),
         Some("NOTICE") => RelayMsg::Notice(
-            arr.get(1).and_then(Value::as_str).unwrap_or_default().to_string(),
+            arr.get(1)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
         ),
         _ => RelayMsg::Other,
     }
@@ -111,7 +115,10 @@ mod tests {
     #[test]
     fn parses_relay_messages() {
         let ev = sign_event(&[7u8; 32], 1, 1, vec![], "hi".into()).unwrap();
-        let frame = format!(r#"["EVENT","sub1",{}]"#, serde_json::to_string(&ev).unwrap());
+        let frame = format!(
+            r#"["EVENT","sub1",{}]"#,
+            serde_json::to_string(&ev).unwrap()
+        );
         assert!(matches!(parse(&frame), RelayMsg::Event(e) if e.content == "hi"));
 
         assert!(matches!(parse(r#"["EOSE","sub1"]"#), RelayMsg::Eose));
@@ -119,7 +126,9 @@ mod tests {
             parse(r#"["OK","abc",true,""]"#),
             RelayMsg::Ok(id, true, _) if id == "abc"
         ));
-        assert!(matches!(parse(r#"["NOTICE","slow down"]"#), RelayMsg::Notice(m) if m == "slow down"));
+        assert!(
+            matches!(parse(r#"["NOTICE","slow down"]"#), RelayMsg::Notice(m) if m == "slow down")
+        );
         assert!(matches!(parse("not json"), RelayMsg::Other));
         assert!(matches!(parse(r#"{"obj":1}"#), RelayMsg::Other));
     }

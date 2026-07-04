@@ -52,7 +52,11 @@ pub fn contact_tags(contacts: &[Contact]) -> Vec<Vec<String>> {
 
 /// Add (or rename) a follow. Returns the updated list; idempotent for an
 /// existing pubkey with the same petname.
-pub fn with_contact(mut contacts: Vec<Contact>, pubkey: &str, petname: Option<String>) -> Vec<Contact> {
+pub fn with_contact(
+    mut contacts: Vec<Contact>,
+    pubkey: &str,
+    petname: Option<String>,
+) -> Vec<Contact> {
     let pubkey = pubkey.to_ascii_lowercase();
     match contacts.iter_mut().find(|c| c.pubkey == pubkey) {
         Some(existing) => {
@@ -83,14 +87,27 @@ mod tests {
     const B: &str = "82341f882b6eabcd2ba7f1ef90aad961cf074af15b9ef44a09f9d2a8fbfbe6a2";
 
     fn ev_with(contacts: &[Contact]) -> Event {
-        sign_event(&[7u8; 32], 1, KIND_CONTACTS, contact_tags(contacts), String::new()).unwrap()
+        sign_event(
+            &[7u8; 32],
+            1,
+            KIND_CONTACTS,
+            contact_tags(contacts),
+            String::new(),
+        )
+        .unwrap()
     }
 
     #[test]
     fn tags_roundtrip_with_petnames() {
         let list = vec![
-            Contact { pubkey: A.into(), petname: Some("fiatjaf".into()) },
-            Contact { pubkey: B.into(), petname: None },
+            Contact {
+                pubkey: A.into(),
+                petname: Some("fiatjaf".into()),
+            },
+            Contact {
+                pubkey: B.into(),
+                petname: None,
+            },
         ];
         let ev = ev_with(&list);
         assert_eq!(parse_contacts(&ev), list);
@@ -98,7 +115,10 @@ mod tests {
 
     #[test]
     fn parse_skips_malformed_tags() {
-        let mut ev = ev_with(&[Contact { pubkey: A.into(), petname: None }]);
+        let mut ev = ev_with(&[Contact {
+            pubkey: A.into(),
+            petname: None,
+        }]);
         ev.tags.push(vec!["e".into(), B.into()]); // event tag, not a follow
         ev.tags.push(vec!["p".into(), "tooshort".into()]);
         ev.tags.push(vec!["p".into()]); // missing key
@@ -122,8 +142,14 @@ mod tests {
     #[test]
     fn without_contact_removes_and_reports() {
         let list = vec![
-            Contact { pubkey: A.into(), petname: None },
-            Contact { pubkey: B.into(), petname: None },
+            Contact {
+                pubkey: A.into(),
+                petname: None,
+            },
+            Contact {
+                pubkey: B.into(),
+                petname: None,
+            },
         ];
         let (list, removed) = without_contact(list, A);
         assert!(removed);

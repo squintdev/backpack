@@ -81,8 +81,10 @@ fn render_list(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_details(f: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default().borders(Borders::ALL)
-        .border_style(Style::default().fg(PHOSPHOR)).title(" details ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PHOSPHOR))
+        .title(" details ");
     let text = match app.selected_identity() {
         None => vec![Line::from("Select or generate an identity.")],
         Some(id) => vec![
@@ -99,10 +101,7 @@ fn render_details(f: &mut Frame, app: &App, area: Rect) {
                 "public identity (share this):",
                 Style::default().fg(DIM),
             )),
-            Line::from(Span::styled(
-                id.to_line(),
-                Style::default().fg(PHOSPHOR),
-            )),
+            Line::from(Span::styled(id.to_line(), Style::default().fg(PHOSPHOR))),
         ],
     };
     let p = Paragraph::new(text).block(block).wrap(Wrap { trim: false });
@@ -119,7 +118,7 @@ fn render_status(f: &mut Frame, app: &App, area: Rect) {
     let p = Paragraph::new(Line::from(line)).block(
         Block::default()
             .borders(Borders::ALL)
-        .border_style(Style::default().fg(PHOSPHOR))
+            .border_style(Style::default().fg(PHOSPHOR))
             .title(format!(" {} ", app.keystore_path().display())),
     );
     f.render_widget(p, area);
@@ -135,17 +134,14 @@ fn render_input_popup(f: &mut Frame, app: &App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-        .border_style(Style::default().fg(PHOSPHOR))
+            .border_style(Style::default().fg(PHOSPHOR))
             .title(" new identity name (Enter=ok, Esc=cancel) "),
     );
     f.render_widget(p, area);
 }
 
 fn render_confirm_popup(f: &mut Frame, app: &App) {
-    let name = app
-        .selected_identity()
-        .map(|i| i.name)
-        .unwrap_or_default();
+    let name = app.selected_identity().map(|i| i.name).unwrap_or_default();
     let area = centered(50, 3, f.area());
     f.render_widget(Clear, area);
     let p = Paragraph::new(Line::from(format!("Delete {name}?  (y/n)")))
@@ -153,7 +149,7 @@ fn render_confirm_popup(f: &mut Frame, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-        .border_style(Style::default().fg(PHOSPHOR))
+                .border_style(Style::default().fg(PHOSPHOR))
                 .title(" confirm ")
                 .border_style(Style::default().fg(ALERT)),
         );

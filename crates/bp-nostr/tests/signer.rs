@@ -51,7 +51,9 @@ fn rpc(
     // read the response off the subscription.
     let (mut sock, _) = tungstenite::connect(RELAY).unwrap();
     if let MaybeTls::Rustls(s) = sock.get_ref() {
-        s.get_ref().set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        s.get_ref()
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
     }
     let filter = Filter {
         authors: Some(vec![signer_pk_hex.to_string()]),
@@ -77,7 +79,10 @@ fn rpc(
                         return Response {
                             id: v["id"].as_str().unwrap().to_string(),
                             result: v["result"].as_str().unwrap_or("").to_string(),
-                            error: v["error"].as_str().filter(|s| !s.is_empty()).map(str::to_string),
+                            error: v["error"]
+                                .as_str()
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string),
                         };
                     }
                 }
@@ -105,23 +110,37 @@ fn remote_sign_over_relay() {
         let log = log.clone();
         std::thread::spawn(move || {
             let _ = run_signer(RELAY, &signer_sk, secret, &stop, |l| {
-                log.lock().unwrap().push(format!("{} {} {}", l.client, l.method, l.outcome));
+                log.lock()
+                    .unwrap()
+                    .push(format!("{} {} {}", l.client, l.method, l.outcome));
             });
         })
     };
     std::thread::sleep(Duration::from_secs(2)); // let the subscription establish
 
     // connect (authorizes this client), then request a signature.
-    let c = rpc(&client_sk, &client_pk_hex, &signer_pub, &signer_pk_hex, "connect",
-                serde_json::json!([signer_pk_hex, secret]));
+    let c = rpc(
+        &client_sk,
+        &client_pk_hex,
+        &signer_pub,
+        &signer_pk_hex,
+        "connect",
+        serde_json::json!([signer_pk_hex, secret]),
+    );
     assert!(c.error.is_none(), "connect failed: {:?}", c.error);
 
     let tmpl = serde_json::json!({
         "kind": 1, "created_at": now(), "tags": [], "content": "signed by my backpack"
     })
     .to_string();
-    let s = rpc(&client_sk, &client_pk_hex, &signer_pub, &signer_pk_hex, "sign_event",
-                serde_json::json!([tmpl]));
+    let s = rpc(
+        &client_sk,
+        &client_pk_hex,
+        &signer_pub,
+        &signer_pk_hex,
+        "sign_event",
+        serde_json::json!([tmpl]),
+    );
     assert!(s.error.is_none(), "sign failed: {:?}", s.error);
 
     let signed: Event = serde_json::from_str(&s.result).unwrap();
@@ -131,5 +150,9 @@ fn remote_sign_over_relay() {
 
     stop.store(true, Ordering::Relaxed);
     let _ = signer.join();
-    assert!(log.lock().unwrap().iter().any(|l| l.contains("sign_event ok")));
+    assert!(log
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|l| l.contains("sign_event ok")));
 }

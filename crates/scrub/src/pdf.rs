@@ -14,7 +14,11 @@ pub fn strip(input: &[u8]) -> Result<(Vec<u8>, Report)> {
 
     // Info dictionary. Removing only the trailer reference leaves the orphaned
     // object in the file, so delete the object itself as well.
-    let info_ref = doc.trailer.get(b"Info").ok().and_then(|o| o.as_reference().ok());
+    let info_ref = doc
+        .trailer
+        .get(b"Info")
+        .ok()
+        .and_then(|o| o.as_reference().ok());
     let info_removed = doc.trailer.remove(b"Info").is_some();
     if let Some(id) = info_ref {
         doc.objects.remove(&id);
@@ -111,7 +115,12 @@ mod tests {
         // File still loads and the catalog no longer references metadata.
         let reloaded = Document::load_mem(&out).unwrap();
         assert!(reloaded.trailer.get(b"Info").is_err());
-        let root = reloaded.trailer.get(b"Root").unwrap().as_reference().unwrap();
+        let root = reloaded
+            .trailer
+            .get(b"Root")
+            .unwrap()
+            .as_reference()
+            .unwrap();
         let catalog = reloaded.get_object(root).unwrap().as_dict().unwrap();
         assert!(catalog.get(b"Metadata").is_err());
     }

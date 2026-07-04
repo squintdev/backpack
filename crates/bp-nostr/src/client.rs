@@ -201,7 +201,10 @@ pub fn fetch_all(relays: &[String], filter: &Filter) -> IoResult<Vec<Event>> {
             .collect();
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_else(|_| Err("fetch thread panicked".into())))
+            .map(|h| {
+                h.join()
+                    .unwrap_or_else(|_| Err("fetch thread panicked".into()))
+            })
             .collect()
     });
 
@@ -259,19 +262,17 @@ pub fn latest_profile(
     relays: &[String],
     author_hex: &str,
 ) -> IoResult<serde_json::Map<String, serde_json::Value>> {
-    Ok(latest_replaceable(relays, author_hex, crate::profile::KIND_METADATA)?
-        .map(|ev| crate::profile::parse_profile(&ev))
-        .unwrap_or_default())
+    Ok(
+        latest_replaceable(relays, author_hex, crate::profile::KIND_METADATA)?
+            .map(|ev| crate::profile::parse_profile(&ev))
+            .unwrap_or_default(),
+    )
 }
 
 /// Update the caller's profile: fetch the newest kind-0, merge `updates` into
 /// its raw JSON (unknown fields from other clients are preserved; empty values
 /// remove a key), sign, and publish. Succeeds if any relay accepts.
-pub fn set_profile(
-    relays: &[String],
-    sk: &[u8; 32],
-    updates: &[(&str, String)],
-) -> IoResult<()> {
+pub fn set_profile(relays: &[String], sk: &[u8; 32], updates: &[(&str, String)]) -> IoResult<()> {
     let me = crate::event::pubkey_hex(sk).map_err(|e| e.to_string())?;
     let current = latest_profile(relays, &me)?;
     let content = crate::profile::merged_content(current, updates);
@@ -547,7 +548,12 @@ pub fn fetch_dms(relays: &[String], sk: &[u8; 32], limit: u32) -> IoResult<Vec<D
         };
         let text = crate::nip04::decrypt(sk, &partner_key, &ev.content)
             .unwrap_or_else(|_| "(could not decrypt)".to_string());
-        dms.push(Dm { partner: partner_hex, outgoing, created_at: ev.created_at, text });
+        dms.push(Dm {
+            partner: partner_hex,
+            outgoing,
+            created_at: ev.created_at,
+            text,
+        });
     }
     Ok(dms)
 }
@@ -586,11 +592,7 @@ pub fn send_dm(
 }
 
 /// Recent text notes from a set of authors, merged across all relays.
-pub fn fetch_timeline(
-    relays: &[String],
-    authors: Vec<String>,
-    limit: u32,
-) -> IoResult<Vec<Event>> {
+pub fn fetch_timeline(relays: &[String], authors: Vec<String>, limit: u32) -> IoResult<Vec<Event>> {
     let filter = Filter {
         authors: Some(authors),
         kinds: Some(vec![crate::event::KIND_TEXT_NOTE]),
@@ -679,28 +681,26 @@ pub fn run_signer(
         }
 
         let client = ev.pubkey.clone();
-        let client_key: [u8; 32] =
-            match hex::decode(&client).ok().and_then(|v| v.try_into().ok()) {
-                Some(k) => k,
-                None => continue,
-            };
+        let client_key: [u8; 32] = match hex::decode(&client).ok().and_then(|v| v.try_into().ok()) {
+            Some(k) => k,
+            None => continue,
+        };
         // Modern clients use NIP-44; older ones NIP-04. Accept either and
         // remember which, so the response uses the same scheme.
-        let (plain, use_nip44) =
-            match crate::nip44::decrypt(signer_sk, &client_key, &ev.content) {
-                Ok(p) => (p, true),
-                Err(_) => match crate::nip04::decrypt(signer_sk, &client_key, &ev.content) {
-                    Ok(p) => (p, false),
-                    Err(_) => {
-                        on_log(SignerLog {
-                            client: short_pk(&client),
-                            method: "(unreadable)".into(),
-                            outcome: "decrypt failed".into(),
-                        });
-                        continue;
-                    }
-                },
-            };
+        let (plain, use_nip44) = match crate::nip44::decrypt(signer_sk, &client_key, &ev.content) {
+            Ok(p) => (p, true),
+            Err(_) => match crate::nip04::decrypt(signer_sk, &client_key, &ev.content) {
+                Ok(p) => (p, false),
+                Err(_) => {
+                    on_log(SignerLog {
+                        client: short_pk(&client),
+                        method: "(unreadable)".into(),
+                        outcome: "decrypt failed".into(),
+                    });
+                    continue;
+                }
+            },
+        };
         let Ok(req) = Request::parse(&plain) else {
             continue;
         };
@@ -768,10 +768,22 @@ mod tests {
 
     #[test]
     fn host_port_parses_relay_urls() {
-        assert_eq!(host_port("wss://relay.damus.io").unwrap(), ("relay.damus.io".into(), 443));
-        assert_eq!(host_port("wss://relay.damus.io/").unwrap(), ("relay.damus.io".into(), 443));
-        assert_eq!(host_port("ws://localhost:7000").unwrap(), ("localhost".into(), 7000));
-        assert_eq!(host_port("wss://r.example:8443/sub/path").unwrap(), ("r.example".into(), 8443));
+        assert_eq!(
+            host_port("wss://relay.damus.io").unwrap(),
+            ("relay.damus.io".into(), 443)
+        );
+        assert_eq!(
+            host_port("wss://relay.damus.io/").unwrap(),
+            ("relay.damus.io".into(), 443)
+        );
+        assert_eq!(
+            host_port("ws://localhost:7000").unwrap(),
+            ("localhost".into(), 7000)
+        );
+        assert_eq!(
+            host_port("wss://r.example:8443/sub/path").unwrap(),
+            ("r.example".into(), 8443)
+        );
         assert!(host_port("https://not-a-relay").is_err());
     }
 }

@@ -26,7 +26,9 @@ pub fn nsec_decode(s: &str) -> Result<Zeroizing<[u8; 32]>> {
     if hrp.as_str() != "nsec" {
         return Err(Error::BadNpub("wrong prefix (expected nsec)"));
     }
-    let bytes: [u8; 32] = data.try_into().map_err(|_| Error::BadNpub("wrong length"))?;
+    let bytes: [u8; 32] = data
+        .try_into()
+        .map_err(|_| Error::BadNpub("wrong length"))?;
     Ok(Zeroizing::new(bytes))
 }
 

@@ -61,7 +61,8 @@ impl Session {
             .store
             .get(name)
             .ok_or_else(|| anyhow!("no identity named {name:?}"))?;
-        kp.nostr_secret()
-            .ok_or_else(|| anyhow!("{name} has no Nostr key yet (press n on IDENTITIES to add one)"))
+        kp.nostr_secret().ok_or_else(|| {
+            anyhow!("{name} has no Nostr key yet (press n on IDENTITIES to add one)")
+        })
     }
 }

@@ -60,17 +60,11 @@ enum Cmd {
     /// List stored identities and their fingerprints.
     List,
     /// Print an identity's public line (share this).
-    Export {
-        name: String,
-    },
+    Export { name: String },
     /// Delete an identity from the store.
-    Rm {
-        name: String,
-    },
+    Rm { name: String },
     /// Add a Nostr key to an identity created before Nostr support.
-    NostrInit {
-        name: String,
-    },
+    NostrInit { name: String },
     /// Sign a file (or stdin) with an identity's signing key.
     Sign {
         #[arg(short, long)]
@@ -248,9 +242,7 @@ fn read_input(input: Option<&PathBuf>) -> Result<Vec<u8>> {
         }
         _ => {
             let mut buf = Vec::new();
-            io::stdin()
-                .read_to_end(&mut buf)
-                .context("reading stdin")?;
+            io::stdin().read_to_end(&mut buf).context("reading stdin")?;
             Ok(buf)
         }
     }
