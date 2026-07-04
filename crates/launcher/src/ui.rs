@@ -7,8 +7,9 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::app::{
-    App, CanaryMode, Gate, IdMode, NostrMode, Screen, ScrubMode, SignMode, SplitMode, StampMode,
-    VeilMode, CANARY_MENU, MENU, NOSTR_MENU, SIGN_MENU, SPLIT_MENU, STAMP_MENU, VEIL_MENU,
+    App, CanaryMode, Gate, IdMode, NostrMode, SatsMode, Screen, ScrubMode, SignMode, SplitMode,
+    StampMode, VeilMode, CANARY_MENU, MENU, NOSTR_MENU, SATS_MENU, SIGN_MENU, SPLIT_MENU,
+    STAMP_MENU, VEIL_MENU,
 };
 use crate::form::Form;
 use crate::session::Session;
@@ -112,6 +113,15 @@ pub fn render(f: &mut Frame, app: &App) {
             Screen::Stamp(mode) => {
                 render_stamp(f, root[1], mode);
                 render_keybar(f, root[2], generic_keys(matches!(mode, StampMode::Menu(_))));
+            }
+            Screen::Sats(mode) => {
+                render_sats(f, root[1], mode);
+                let keys: &[(&str, &str)] = match mode {
+                    SatsMode::Menu(_) => &[("↑↓/jk", "select"), ("enter", "open"), ("esc", "back")],
+                    SatsMode::ConfirmSend { .. } => &[("y", "BROADCAST"), ("n", "abort")],
+                    _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
+                };
+                render_keybar(f, root[2], keys);
             }
         },
     }
@@ -682,6 +692,20 @@ fn render_stamp(f: &mut Frame, area: Rect, mode: &StampMode) {
         | StampMode::Verify(form)
         | StampMode::Info(form) => render_form_page(f, area, form),
         StampMode::Results { title, lines } => render_lines(f, area, title, lines),
+    }
+}
+
+fn render_sats(f: &mut Frame, area: Rect, mode: &SatsMode) {
+    match mode {
+        SatsMode::Menu(sel) => render_submenu(f, area, " ▞▞ SATS ", SATS_MENU, *sel),
+        SatsMode::Address(form)
+        | SatsMode::Balance(form)
+        | SatsMode::History(form)
+        | SatsMode::Send(form) => render_form_page(f, area, form),
+        SatsMode::ConfirmSend { lines, .. } => {
+            render_lines(f, area, "CONFIRM — y broadcasts, n aborts", lines)
+        }
+        SatsMode::Results { title, lines } => render_lines(f, area, title, lines),
     }
 }
 

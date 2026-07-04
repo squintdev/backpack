@@ -88,6 +88,14 @@ pub const MENU: &[MenuEntry] = &[
             "via OpenTimestamps. Calendars only ever see a blinded hash.",
         ],
     },
+    MenuEntry {
+        name: "SATS",
+        tagline: "bitcoin client",
+        about: &[
+            "Thin Bitcoin client: HD addresses, balance, history, send.",
+            "Signet by default — mainnet only when you say so.",
+        ],
+    },
 ];
 
 // ---------------------------------------------------------------- screens
@@ -272,6 +280,30 @@ pub const STAMP_MENU: &[&str] = &[
     "INFO     show a proof's attestations",
 ];
 
+pub enum SatsMode {
+    Menu(usize),
+    Address(Form),
+    Balance(Form),
+    History(Form),
+    Send(Form),
+    /// A signed-but-not-broadcast spend awaiting explicit y/n.
+    ConfirmSend {
+        lines: Vec<String>,
+        tx_hex: String,
+    },
+    Results {
+        title: String,
+        lines: Vec<String>,
+    },
+}
+
+pub const SATS_MENU: &[&str] = &[
+    "ADDRESS  next receive address",
+    "BALANCE  confirmed + pending",
+    "HISTORY  recent transactions",
+    "SEND     pay someone (confirm before broadcast)",
+];
+
 pub enum Screen {
     Home { selected: usize },
     Identities(IdentitiesState),
@@ -282,6 +314,7 @@ pub enum Screen {
     Sign(SignMode),
     Canary(CanaryMode),
     Stamp(StampMode),
+    Sats(SatsMode),
 }
 
 // ---------------------------------------------------------------- pending ops
@@ -337,6 +370,24 @@ pub enum Pending {
     },
     NostrSignerStart {
         identity: String,
+    },
+    SatsAddress {
+        identity: String,
+    },
+    SatsBalance {
+        identity: String,
+    },
+    SatsHistory {
+        identity: String,
+    },
+    SatsPrepare {
+        identity: String,
+        address: String,
+        sats: u64,
+        fee: String,
+    },
+    SatsBroadcast {
+        tx_hex: String,
     },
     StampFile {
         file: String,
@@ -469,6 +520,7 @@ impl App {
             Screen::Sign(_) => self.on_key_sign(code),
             Screen::Canary(_) => self.on_key_canary(code),
             Screen::Stamp(_) => self.on_key_stamp(code),
+            Screen::Sats(_) => self.on_key_sats(code),
         }
     }
 
@@ -538,7 +590,8 @@ impl App {
             4 => Screen::Split(SplitMode::Menu(0)),
             5 => Screen::Sign(SignMode::Menu(0)),
             6 => Screen::Canary(CanaryMode::Menu(0)),
-            _ => Screen::Stamp(StampMode::Menu(0)),
+            7 => Screen::Stamp(StampMode::Menu(0)),
+            _ => Screen::Sats(SatsMode::Menu(0)),
         }
     }
 
@@ -1554,6 +1607,115 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------- sats
+
+    fn on_key_sats(&mut self, code: KeyCode) {
+        let first = self.first_identity();
+        let mut back_home = false;
+        let mut queue: Option<Pending> = None;
+        {
+            let Screen::Sats(mode) = &mut self.screen else {
+                return;
+            };
+            match mode {
+                SatsMode::Menu(sel) => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => back_home = true,
+                    KeyCode::Char('j') | KeyCode::Down => *sel = (*sel + 1) % SATS_MENU.len(),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *sel = sel.checked_sub(1).unwrap_or(SATS_MENU.len() - 1)
+                    }
+                    KeyCode::Enter => {
+                        let id_field = Field::new("identity").with_value(&first);
+                        *mode = match *sel {
+                            0 => SatsMode::Address(Form::new("receive address", vec![id_field])),
+                            1 => SatsMode::Balance(Form::new("balance", vec![id_field])),
+                            2 => SatsMode::History(Form::new("history", vec![id_field])),
+                            _ => SatsMode::Send(Form::new(
+                                "send bitcoin",
+                                vec![
+                                    id_field,
+                                    Field::new("to address"),
+                                    Field::new("amount (sats)"),
+                                    Field::new("fee (fast/normal/slow or sat/vB)")
+                                        .with_value("normal"),
+                                ],
+                            )),
+                        };
+                    }
+                    _ => {}
+                },
+                SatsMode::Address(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SatsMode::Menu(0),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::SatsAddress {
+                            identity: form.value(0).to_string(),
+                        })
+                    }
+                },
+                SatsMode::Balance(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SatsMode::Menu(1),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::SatsBalance {
+                            identity: form.value(0).to_string(),
+                        })
+                    }
+                },
+                SatsMode::History(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SatsMode::Menu(2),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::SatsHistory {
+                            identity: form.value(0).to_string(),
+                        })
+                    }
+                },
+                SatsMode::Send(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = SatsMode::Menu(3),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match form.value(2).replace([',', '_'], "").parse::<u64>()
+                    {
+                        Ok(sats) => {
+                            queue = Some(Pending::SatsPrepare {
+                                identity: form.value(0).to_string(),
+                                address: form.value(1).to_string(),
+                                sats,
+                                fee: form.value(3).to_string(),
+                            })
+                        }
+                        Err(_) => form.error = Some("amount must be a whole number of sats".into()),
+                    },
+                },
+                SatsMode::ConfirmSend { tx_hex, .. } => match code {
+                    KeyCode::Char('y') => {
+                        queue = Some(Pending::SatsBroadcast {
+                            tx_hex: tx_hex.clone(),
+                        })
+                    }
+                    KeyCode::Char('n') | KeyCode::Esc => {
+                        *mode = SatsMode::Results {
+                            title: "send".into(),
+                            lines: vec!["aborted — nothing was broadcast".into()],
+                        }
+                    }
+                    _ => {}
+                },
+                SatsMode::Results { .. } => {
+                    if matches!(code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q')) {
+                        *mode = SatsMode::Menu(0);
+                    }
+                }
+            }
+        }
+        if back_home {
+            self.screen = Screen::Home { selected: 8 };
+        }
+        if queue.is_some() {
+            self.pending = queue;
+        }
+    }
+
     // ------------------------------------------------------------- pending
 
     /// Execute a queued slow operation (the main loop calls this after
@@ -1775,6 +1937,47 @@ impl App {
                         copy: None,
                         scroll: 0,
                     };
+                }
+            }
+            Pending::SatsAddress { identity } => {
+                let result = sats_address(session, &identity);
+                if let Screen::Sats(mode) = &mut self.screen {
+                    *mode = sats_results("receive address", result);
+                }
+            }
+            Pending::SatsBalance { identity } => {
+                let result = sats_balance(session, &identity);
+                if let Screen::Sats(mode) = &mut self.screen {
+                    *mode = sats_results("balance", result);
+                }
+            }
+            Pending::SatsHistory { identity } => {
+                let result = sats_history(session, &identity);
+                if let Screen::Sats(mode) = &mut self.screen {
+                    *mode = sats_results("history", result);
+                }
+            }
+            Pending::SatsPrepare {
+                identity,
+                address,
+                sats,
+                fee,
+            } => {
+                let result = sats_prepare(session, &identity, &address, sats, &fee);
+                if let Screen::Sats(mode) = &mut self.screen {
+                    *mode = match result {
+                        Ok((lines, tx_hex)) => SatsMode::ConfirmSend { lines, tx_hex },
+                        Err(e) => SatsMode::Results {
+                            title: "send".into(),
+                            lines: vec![format!("refused: {e}")],
+                        },
+                    };
+                }
+            }
+            Pending::SatsBroadcast { tx_hex } => {
+                let result = sats_broadcast(&tx_hex);
+                if let Screen::Sats(mode) = &mut self.screen {
+                    *mode = sats_results("broadcast", result);
                 }
             }
             Pending::StampFile { file } => {
@@ -2729,6 +2932,154 @@ fn stamp_info(proof_path: &str) -> Result<Vec<String>> {
     Ok(lines)
 }
 
+// ---------------------------------------------------------------- sats helpers
+
+fn sats_network() -> sats::Network {
+    std::env::var("BACKPACK_BTC_NETWORK")
+        .ok()
+        .and_then(|n| sats::parse_network(&n).ok())
+        .unwrap_or(sats::Network::Signet)
+}
+
+fn sats_client() -> sats::esplora::Client {
+    let network = sats_network();
+    let url = std::env::var("BACKPACK_ESPLORA")
+        .unwrap_or_else(|_| sats::default_esplora(network).to_string());
+    sats::esplora::Client::new(&url)
+}
+
+fn sats_wallet(session: &Session, identity: &str) -> Result<sats::hd::Wallet> {
+    let kp = session
+        .store
+        .get(identity)
+        .ok_or_else(|| anyhow!("no identity named {identity:?}"))?;
+    let seed = kp.btc_seed().ok_or_else(|| {
+        anyhow!("{identity} has no Bitcoin seed yet (run `keyring btc-init {identity}`)")
+    })?;
+    Ok(sats::hd::Wallet::from_seed(&seed, sats_network())?)
+}
+
+fn sats_results(title: &str, result: Result<Vec<String>>) -> SatsMode {
+    let mut lines = match result {
+        Ok(l) => l,
+        Err(e) => vec![format!("failed: {e}")],
+    };
+    lines.push(format!("network: {:?}", sats_network()));
+    SatsMode::Results {
+        title: title.into(),
+        lines,
+    }
+}
+
+fn sats_address(session: &Session, identity: &str) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity)?;
+    let s = sats::wallet::scan(&wallet, &sats_client())?;
+    let key = wallet.key(sats::hd::Chain::External, s.next_receive)?;
+    Ok(vec![
+        key.address.to_string(),
+        "fresh address — give each payer their own".into(),
+    ])
+}
+
+fn sats_balance(session: &Session, identity: &str) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity)?;
+    let s = sats::wallet::scan(&wallet, &sats_client())?;
+    let mut lines = vec![format!("confirmed: {}", sats::fmt_sats(s.confirmed_sats))];
+    if s.pending_sats != 0 {
+        lines.push(format!("pending:   {}", sats::fmt_sats(s.pending_sats)));
+    }
+    Ok(lines)
+}
+
+fn sats_history(session: &Session, identity: &str) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity)?;
+    let client = sats_client();
+    let s = sats::wallet::scan(&wallet, &client)?;
+    let entries = sats::wallet::history(&s, &client)?;
+    if entries.is_empty() {
+        return Ok(vec!["(no transactions)".into()]);
+    }
+    Ok(entries
+        .into_iter()
+        .map(|e| {
+            let status = if e.confirmed { "conf" } else { "PEND" };
+            format!("{status}  {:>24}  {}", sats::fmt_sats(e.net_sats), e.txid)
+        })
+        .collect())
+}
+
+fn sats_prepare(
+    session: &Session,
+    identity: &str,
+    address: &str,
+    amount: u64,
+    fee: &str,
+) -> Result<(Vec<String>, String)> {
+    let wallet = sats_wallet(session, identity)?;
+    let client = sats_client();
+    let s = sats::wallet::scan(&wallet, &client)?;
+    let fee_rate = match fee.parse::<f64>() {
+        Ok(n) if (0.9..=2000.0).contains(&n) => n,
+        Ok(n) => bail!("fee rate {n} sat/vB out of sane range"),
+        Err(_) => {
+            let target = match fee {
+                "fast" => "2",
+                "normal" | "" => "6",
+                "slow" => "144",
+                other => bail!("unknown fee target {other:?}"),
+            };
+            let est = client.fee_estimates().map_err(|e| anyhow!(e))?;
+            est.get(target).copied().unwrap_or(1.0).max(1.0)
+        }
+    };
+    let mut spend = sats::wallet::build_spend(&wallet, &s, address, amount, fee_rate)?;
+
+    let mut lines = vec![
+        format!("send     {}", sats::fmt_sats(spend.amount as i64)),
+        format!("to       {address}"),
+    ];
+    if address.len() > 16 {
+        lines.push(format!(
+            "         check ends: {} … {}",
+            &address[..8],
+            &address[address.len() - 8..]
+        ));
+    }
+    lines.push(format!(
+        "fee      {} ({:.1} sat/vB)",
+        sats::fmt_sats(spend.fee as i64),
+        spend.fee_rate
+    ));
+    if let Some(c) = &spend.change_address {
+        lines.push(format!(
+            "change   {} -> {c}",
+            sats::fmt_sats(spend.change as i64)
+        ));
+    }
+    lines.push(format!(
+        "balance  {} -> {}",
+        sats::fmt_sats(spend.spendable_before as i64),
+        sats::fmt_sats(spend.spendable_before as i64 - amount as i64 - spend.fee as i64)
+    ));
+    lines.push(format!("network  {:?}", sats_network()));
+    if spend.fee * 20 > spend.amount {
+        lines.push("⚠ fee exceeds 5% of the amount".into());
+    }
+    if spend.amount * 2 > spend.spendable_before {
+        lines.push("⚠ sending more than half your spendable balance".into());
+    }
+    let tx_hex = sats::wallet::sign_spend(&wallet, &s, &mut spend)?;
+    Ok((lines, tx_hex))
+}
+
+fn sats_broadcast(tx_hex: &str) -> Result<Vec<String>> {
+    let txid = sats_client().broadcast(tx_hex)?;
+    Ok(vec![
+        format!("broadcast: {txid}"),
+        "RBF enabled — fee can be bumped if stuck".into(),
+    ])
+}
+
 // ---------------------------------------------------------------- tests
 
 #[cfg(test)]
@@ -2858,6 +3209,41 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn sats_screen_navigation_and_send_validation() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('9'));
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::Sats(SatsMode::Menu(0))));
+
+        // SEND with a non-numeric amount is rejected in-form, no pending op.
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(app.screen, Screen::Sats(SatsMode::Send(_))));
+        app.on_key(KeyCode::Enter); // identity
+        type_str(&mut app, "tb1qsomewhere");
+        app.on_key(KeyCode::Enter); // address -> amount
+        type_str(&mut app, "lots");
+        app.on_key(KeyCode::Enter); // -> fee field
+        app.on_key(KeyCode::Enter); // submit
+        match &app.screen {
+            Screen::Sats(SatsMode::Send(f)) => assert!(f.error.is_some()),
+            other => panic!(
+                "bad amount must stay on the form, got {}",
+                match other {
+                    Screen::Sats(SatsMode::Results { lines, .. }) => lines.join("|"),
+                    _ => "different screen".into(),
+                }
+            ),
+        }
+        assert!(app.pending.is_none());
         std::fs::remove_file(&store).ok();
     }
 

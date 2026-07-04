@@ -34,8 +34,14 @@ cargo build --release --target aarch64-unknown-linux-musl
 
 `.cargo/config.toml` already selects the cross-linker and `+crt-static`, and the
 release profile is tuned for the deck (thin LTO, stripped, `panic=abort`).
-Expected output: nine binaries (backpack, veil, scrub, split, keyring,
-keyring-tui, nostr, canary, stamp), under 20 MB total.
+Expected output: ten binaries (backpack, veil, scrub, split, keyring,
+keyring-tui, nostr, canary, stamp, sats), under 25 MB total.
+
+Note: `sats` compiles libsecp256k1 (C), so cross-builds need an ARM C
+cross-compiler in addition to the Rust target — e.g. the
+`aarch64-linux-musl-cross` toolchain (or `zig cc`). Set
+`CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc` if cargo does not
+find it on its own.
 
 > Musl static builds have not been run on real Pi hardware yet — the dependency
 > tree is pure Rust so they are expected to work, but verify on your board.
@@ -44,7 +50,7 @@ keyring-tui, nostr, canary, stamp), under 20 MB total.
 
 ```sh
 # from the build machine
-scp target/aarch64-unknown-linux-musl/release/{backpack,veil,scrub,split,keyring,keyring-tui,nostr,canary,stamp} \
+scp target/aarch64-unknown-linux-musl/release/{backpack,veil,scrub,split,keyring,keyring-tui,nostr,canary,stamp,sats} \
     deck@pi:/opt/backpack/
 ```
 

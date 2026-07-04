@@ -15,7 +15,7 @@ backpack
    it asks twice and creates the encrypted keystore; afterwards it unlocks the
    existing one. The store stays unlocked for the whole session, so no screen
    ever prompts again.
-2. **Home.** The tool menu. `↑↓`/`jk` or `1`–`8` select, `Enter` opens,
+2. **Home.** The tool menu. `↑↓`/`jk` or `1`–`9` select, `Enter` opens,
    `!` drops to a real shell (exit to return), `q` quits.
 3. **Tool screens.** Each tool is native — forms with `Tab`/`Enter` field
    navigation, `Esc` backs out one level. Slow operations (relay calls,
@@ -33,8 +33,9 @@ backpack
 | SIGN/VERIFY | Sign a file with an identity (`<file>.sig`); verify anyone's signature from their `.pub` line. |
 | CANARY | NEW signs a fresh warrant canary (statement, validity window), RENEW re-signs an existing one (sequence+1, fresh window), CHECK verifies anyone's canary — signature, expiry, optional signer pinning and rollback detection. |
 | STAMP | STAMP submits a file's blinded hash to OpenTimestamps calendars (writes `<file>.ots`), UPGRADE fetches the Bitcoin attestation once anchored, VERIFY checks a file against its proof and Bitcoin, INFO shows a proof's attestations. |
+| SATS | ADDRESS (next unused receive address), BALANCE, HISTORY, SEND — a signed-but-unbroadcast transaction is shown in full (amount, fee, change, balance impact, warnings) and `y` broadcasts / `n` aborts. Signet by default; `BACKPACK_BTC_NETWORK=mainnet` for real coins. |
 
-The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`, `canary`, `stamp`) remain for
+The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`, `canary`, `stamp`, `sats`) remain for
 scripting and pipes — the launcher and the CLIs share the same libraries, so
 behavior is identical.
 

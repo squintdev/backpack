@@ -139,4 +139,4 @@ pairs — the sequence numbers plus timestamps form a provable, gap-free chain.
 
 See each tool's page for details: [bp-core](bp-core.md) · [veil](veil.md) ·
 [scrub](scrub.md) · [split](split.md) · [keyring](keyring.md) ·
-[canary](canary.md) · [stamp](stamp.md) · [nostr](nostr.md).
+[canary](canary.md) · [stamp](stamp.md) · [sats](sats.md) · [nostr](nostr.md).

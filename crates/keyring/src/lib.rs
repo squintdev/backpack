@@ -54,6 +54,7 @@ pub struct KeyPair {
     ed_sk: Zeroizing<[u8; 32]>,
     x_sk: Zeroizing<[u8; 32]>,
     nostr_sk: Option<Zeroizing<[u8; 32]>>,
+    btc_seed: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl KeyPair {
@@ -69,6 +70,7 @@ impl KeyPair {
             ed_sk: ed,
             x_sk: x,
             nostr_sk: Some(gen_nostr_key()),
+            btc_seed: Some(gen_seed()),
         })
     }
 
@@ -115,6 +117,20 @@ impl KeyPair {
     pub fn nostr_secret(&self) -> Option<Zeroizing<[u8; 32]>> {
         self.nostr_sk.as_ref().map(|k| Zeroizing::new(**k))
     }
+
+    /// The raw 32-byte BIP32 master seed for Bitcoin (`sats`), if this
+    /// identity has one. Identities created before Bitcoin support return
+    /// `None` until upgraded with [`KeyStore::btc_init`]. Zeroized on drop.
+    pub fn btc_seed(&self) -> Option<Zeroizing<[u8; 32]>> {
+        self.btc_seed.as_ref().map(|k| Zeroizing::new(**k))
+    }
+}
+
+/// Generate a random 32-byte BIP32 master seed.
+fn gen_seed() -> Zeroizing<[u8; 32]> {
+    let mut seed = Zeroizing::new([0u8; 32]);
+    OsRng.fill_bytes(seed.as_mut_slice());
+    seed
 }
 
 /// Generate a valid secp256k1 secret key.
@@ -213,6 +229,9 @@ struct StoredEntry {
     /// Absent on stores written before Nostr support; loads as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nostr_sk: Option<String>,
+    /// Absent on stores written before Bitcoin support; loads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    btc_seed: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -254,11 +273,16 @@ impl KeyStore {
                 Some(hexstr) => Some(Zeroizing::new(decode_key(hexstr)?)),
                 None => None,
             };
+            let btc_seed = match &e.btc_seed {
+                Some(hexstr) => Some(Zeroizing::new(decode_key(hexstr)?)),
+                None => None,
+            };
             entries.push(KeyPair {
                 name: e.name,
                 ed_sk: Zeroizing::new(decode_key(&e.ed25519_sk)?),
                 x_sk: Zeroizing::new(decode_key(&e.x25519_sk)?),
                 nostr_sk,
+                btc_seed,
             });
         }
         Ok(KeyStore {
@@ -279,6 +303,7 @@ impl KeyStore {
                     ed25519_sk: hex::encode(*k.ed_sk),
                     x25519_sk: hex::encode(*k.x_sk),
                     nostr_sk: k.nostr_sk.as_ref().map(|s| hex::encode(**s)),
+                    btc_seed: k.btc_seed.as_ref().map(|s| hex::encode(**s)),
                 })
                 .collect(),
         };
@@ -321,6 +346,21 @@ impl KeyStore {
             return Ok(false);
         }
         kp.nostr_sk = Some(gen_nostr_key());
+        Ok(true)
+    }
+
+    /// Give an existing identity a Bitcoin seed if it lacks one (identities
+    /// created before Bitcoin support). Returns whether a seed was added.
+    pub fn btc_init(&mut self, name: &str) -> Result<bool> {
+        let kp = self
+            .entries
+            .iter_mut()
+            .find(|k| k.name == name)
+            .ok_or_else(|| Error::NotFound(name.to_string()))?;
+        if kp.btc_seed.is_some() {
+            return Ok(false);
+        }
+        kp.btc_seed = Some(gen_seed());
         Ok(true)
     }
 
@@ -465,6 +505,7 @@ mod tests {
                 ed25519_sk: hex::encode([1u8; 32]),
                 x25519_sk: hex::encode([2u8; 32]),
                 nostr_sk: None,
+                btc_seed: None,
             }],
         };
         let json = serde_json::to_vec(&legacy).unwrap();
@@ -478,6 +519,43 @@ mod tests {
         assert!(store.nostr_init("old").unwrap());
         assert!(!store.nostr_init("old").unwrap()); // idempotent
         assert!(store.get("old").unwrap().nostr_secret().is_some());
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn btc_seed_persists_and_old_stores_upgrade() {
+        let path = temp_path();
+        let pass = b"pw";
+        {
+            let mut store = KeyStore::open(&path, pass).unwrap();
+            store.generate("alice").unwrap();
+            assert!(store.get("alice").unwrap().btc_seed().is_some());
+            store.save(pass).unwrap();
+        }
+        let reopened = KeyStore::open(&path, pass).unwrap();
+        let seed = reopened.get("alice").unwrap().btc_seed().unwrap();
+        assert_ne!(*seed, [0u8; 32]);
+
+        // Pre-Bitcoin entry upgrades exactly once.
+        let legacy = StoredFile {
+            version: STORE_VERSION,
+            entries: vec![StoredEntry {
+                name: "old".to_string(),
+                ed25519_sk: hex::encode([1u8; 32]),
+                x25519_sk: hex::encode([2u8; 32]),
+                nostr_sk: None,
+                btc_seed: None,
+            }],
+        };
+        let json = serde_json::to_vec(&legacy).unwrap();
+        let mut sealed = Vec::new();
+        bp_core::seal(&mut &json[..], &mut sealed, pass).unwrap();
+        std::fs::write(&path, &sealed).unwrap();
+        let mut store = KeyStore::open(&path, pass).unwrap();
+        assert!(store.get("old").unwrap().btc_seed().is_none());
+        assert!(store.btc_init("old").unwrap());
+        assert!(!store.btc_init("old").unwrap());
+        assert!(store.get("old").unwrap().btc_seed().is_some());
         std::fs::remove_file(&path).ok();
     }
 

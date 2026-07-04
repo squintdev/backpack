@@ -28,6 +28,7 @@ backpack/
     ├── keyring/          Ed25519/X25519/secp256k1 identity manager (lib + bin + TUI)
     ├── canary/           warrant canary: signed, expiring statements (lib + bin)
     ├── stamp/            timestamp proofs, OpenTimestamps-compatible (lib + bin)
+    ├── sats/             thin Bitcoin client, BIP84 HD + Esplora (lib + bin)
     ├── bp-nostr/         `nostr` minimal Nostr client (NIP-01)
     └── launcher/         `backpack` boot menu TUI (cyberdeck entry point)
 ```
@@ -190,6 +191,22 @@ Verification checks the proof against the block's merkle root (via Esplora;
 `--esplora` for your own node, `--offline` to skip network). See
 [docs/stamp.md](docs/stamp.md).
 
+### `sats` — thin Bitcoin client
+
+Send and receive Bitcoin with keys from the keystore. BIP84 HD addresses
+(fresh per receive), Esplora backend, local signing via rust-bitcoin.
+**Signet by default** — real money requires `--network mainnet`, on purpose.
+
+```sh
+sats address --identity alice          # next receive address
+sats balance --identity alice
+sats send --identity alice tb1q… 50000 --fee normal
+```
+
+Sends show destination, fee, change, and balance impact, then require a
+typed `yes`. High-fee and half-your-balance sends are refused without
+`--force`. RBF always on. See [docs/sats.md](docs/sats.md).
+
 ### `nostr` — Nostr client
 
 Publish and read notes on Nostr — decentralized, censorship-resistant
@@ -213,7 +230,7 @@ Every fetched event is signature-verified before display. Relays come from
 ### `backpack` — the TUI client
 
 The suite as one full-screen client: the keystore unlocks via an in-TUI masked
-prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify, canary, stamp —
+prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify, canary, stamp, sats —
 is a native screen with forms and results panes. No shelling out. `!` drops to
 a real shell when you need one. Designed as the auto-start entry point for a
 terminal-only cyberdeck — amber phosphor monochrome, renders on the bare Linux
