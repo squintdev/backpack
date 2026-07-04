@@ -192,10 +192,7 @@ mod tests {
     fn fewer_than_k_fails() {
         let shares = deal(SECRET, 3, 5).unwrap();
         let subset = vec![shares[0].clone(), shares[1].clone()];
-        assert_eq!(
-            combine(&subset),
-            Err(Error::NotEnough { need: 3, got: 2 })
-        );
+        assert_eq!(combine(&subset), Err(Error::NotEnough { need: 3, got: 2 }));
     }
 
     #[test]

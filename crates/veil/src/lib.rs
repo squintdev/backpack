@@ -63,7 +63,10 @@ pub fn dec_output_for(input: &Path) -> Result<PathBuf> {
     if input.extension().map(|e| e == EXT).unwrap_or(false) {
         Ok(input.with_extension(""))
     } else {
-        bail!("cannot infer output name for {}; choose one", input.display())
+        bail!(
+            "cannot infer output name for {}; choose one",
+            input.display()
+        )
     }
 }
 
@@ -83,9 +86,8 @@ fn file_op<F>(input: &Path, output: &Path, op: F) -> Result<()>
 where
     F: FnOnce(&mut dyn Read, &mut dyn Write) -> Result<()>,
 {
-    let mut reader = BufReader::new(
-        File::open(input).with_context(|| format!("opening {}", input.display()))?,
-    );
+    let mut reader =
+        BufReader::new(File::open(input).with_context(|| format!("opening {}", input.display()))?);
     let tmp = tmp_path(output);
     let file = File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
     let mut w = BufWriter::new(file);

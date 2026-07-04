@@ -178,7 +178,8 @@ impl PublicIdentity {
         let Ok(vk) = VerifyingKey::from_bytes(&self.ed) else {
             return false;
         };
-        vk.verify(msg, &ed25519_dalek::Signature::from_bytes(sig)).is_ok()
+        vk.verify(msg, &ed25519_dalek::Signature::from_bytes(sig))
+            .is_ok()
     }
 }
 
@@ -199,9 +200,7 @@ pub fn parse_signature(s: &str) -> Result<[u8; 64]> {
         .nth(1)
         .ok_or(Error::BadFormat("signature"))?;
     let bytes = hex::decode(hexpart).map_err(|_| Error::BadFormat("signature"))?;
-    bytes
-        .try_into()
-        .map_err(|_| Error::BadFormat("signature"))
+    bytes.try_into().map_err(|_| Error::BadFormat("signature"))
 }
 
 // --- on-disk (JSON, then sealed by bp-core) -------------------------------
@@ -354,8 +353,7 @@ pub fn default_keystore_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var(PATH_ENV) {
         return Some(PathBuf::from(p));
     }
-    directories::ProjectDirs::from("", "", "backpack")
-        .map(|d| d.config_dir().join("keyring.veil"))
+    directories::ProjectDirs::from("", "", "backpack").map(|d| d.config_dir().join("keyring.veil"))
 }
 
 fn validate_name(name: &str) -> Result<()> {

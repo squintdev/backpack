@@ -24,14 +24,19 @@ use crate::stream;
 pub const MAGIC: &[u8; 7] = b"VEILX1\n";
 
 /// Derive the 32-byte content key from a shared secret and both public keys.
-fn derive(shared: &[u8; 32], ephemeral_pk: &[u8; 32], recipient_pk: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
+fn derive(
+    shared: &[u8; 32],
+    ephemeral_pk: &[u8; 32],
+    recipient_pk: &[u8; 32],
+) -> Result<Zeroizing<[u8; 32]>> {
     let mut info = [0u8; 64];
     info[..32].copy_from_slice(ephemeral_pk);
     info[32..].copy_from_slice(recipient_pk);
 
     let hk = hkdf::Hkdf::<sha2::Sha256>::new(None, shared);
     let mut key = Zeroizing::new([0u8; 32]);
-    hk.expand(&info, key.as_mut_slice()).map_err(|_| Error::Kdf)?;
+    hk.expand(&info, key.as_mut_slice())
+        .map_err(|_| Error::Kdf)?;
     Ok(key)
 }
 
@@ -67,12 +72,16 @@ pub fn open_as_recipient<R: Read + ?Sized, W: Write + ?Sized>(
     recipient_sk: &[u8; 32],
 ) -> Result<()> {
     let mut magic = [0u8; MAGIC.len()];
-    reader.read_exact(&mut magic).map_err(|_| Error::BadHeader)?;
+    reader
+        .read_exact(&mut magic)
+        .map_err(|_| Error::BadHeader)?;
     if &magic != MAGIC {
         return Err(Error::BadHeader);
     }
     let mut eph_pk = [0u8; 32];
-    reader.read_exact(&mut eph_pk).map_err(|_| Error::BadHeader)?;
+    reader
+        .read_exact(&mut eph_pk)
+        .map_err(|_| Error::BadHeader)?;
 
     let sk = StaticSecret::from(*recipient_sk);
     let recipient_pk = PublicKey::from(&sk).to_bytes();

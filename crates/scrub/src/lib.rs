@@ -24,6 +24,8 @@ pub fn strip(bytes: &[u8]) -> Result<(Vec<u8>, Report)> {
         Some(Kind::Jpeg) => jpeg::strip(bytes),
         Some(Kind::Png) => png::strip(bytes),
         Some(Kind::Pdf) => pdf::strip(bytes),
-        None => Err(anyhow!("unsupported or unrecognized format (need JPEG/PNG/PDF)")),
+        None => Err(anyhow!(
+            "unsupported or unrecognized format (need JPEG/PNG/PDF)"
+        )),
     }
 }

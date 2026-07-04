@@ -74,10 +74,18 @@ pub struct Response {
 
 impl Response {
     fn ok(id: &str, result: impl Into<String>) -> Response {
-        Response { id: id.to_string(), result: result.into(), error: None }
+        Response {
+            id: id.to_string(),
+            result: result.into(),
+            error: None,
+        }
     }
     fn err(id: &str, error: impl Into<String>) -> Response {
-        Response { id: id.to_string(), result: String::new(), error: Some(error.into()) }
+        Response {
+            id: id.to_string(),
+            result: String::new(),
+            error: Some(error.into()),
+        }
     }
     pub fn to_json(&self) -> String {
         json!({
@@ -204,7 +212,8 @@ fn decrypt_from(sk: &[u8; 32], peer_hex: &str, ct: &str) -> Result<String> {
 /// are preserved; pubkey/id/sig are filled in.
 fn sign_from_template(sk: &[u8; 32], param: Option<String>) -> Result<String> {
     let raw = param.ok_or(Error::BadFormat("sign_event template"))?;
-    let tmpl: Value = serde_json::from_str(&raw).map_err(|_| Error::BadFormat("sign_event json"))?;
+    let tmpl: Value =
+        serde_json::from_str(&raw).map_err(|_| Error::BadFormat("sign_event json"))?;
 
     let kind = tmpl
         .get("kind")
@@ -246,7 +255,10 @@ mod tests {
     #[test]
     fn bunker_url_encodes_relay() {
         let url = bunker_url("deadbeef", "wss://relay.damus.io", "s3cret");
-        assert_eq!(url, "bunker://deadbeef?relay=wss%3A%2F%2Frelay.damus.io&secret=s3cret");
+        assert_eq!(
+            url,
+            "bunker://deadbeef?relay=wss%3A%2F%2Frelay.damus.io&secret=s3cret"
+        );
     }
 
     #[test]
@@ -274,10 +286,14 @@ mod tests {
         let b = Request::parse(r#"{"id":"3b","method":"connect","params":["open"]}"#).unwrap();
         assert!(respond(&SK, &b, "open").error.is_none());
         // [pubkey, secret, permissions]
-        let c = Request::parse(r#"{"id":"3c","method":"connect","params":["x","open","sign_event:1"]}"#).unwrap();
+        let c = Request::parse(
+            r#"{"id":"3c","method":"connect","params":["x","open","sign_event:1"]}"#,
+        )
+        .unwrap();
         assert!(respond(&SK, &c, "open").error.is_none());
         // wrong secret anywhere -> rejected
-        let bad = Request::parse(r#"{"id":"4","method":"connect","params":["x","wrong"]}"#).unwrap();
+        let bad =
+            Request::parse(r#"{"id":"4","method":"connect","params":["x","wrong"]}"#).unwrap();
         assert!(respond(&SK, &bad, "open").error.is_some());
     }
 

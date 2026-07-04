@@ -31,7 +31,8 @@ pub fn strip(input: &[u8]) -> Result<(Vec<u8>, Report)> {
                 // First APP1 is typically EXIF; a later one is usually XMP.
                 0xE1 if !app1_seen => {
                     app1_seen = true;
-                    note.clone().unwrap_or_else(|| "EXIF/XMP metadata (APP1)".to_string())
+                    note.clone()
+                        .unwrap_or_else(|| "EXIF/XMP metadata (APP1)".to_string())
                 }
                 0xE1 => "XMP metadata (APP1)".to_string(),
                 0xED => "IPTC/Photoshop metadata (APP13)".to_string(),

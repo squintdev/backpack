@@ -40,10 +40,7 @@ pub fn field(map: &Map<String, Value>, key: &str) -> Option<String> {
 /// An update with a non-empty value sets the key; an empty value removes it;
 /// keys absent from `updates` — including ones backpack doesn't model — are
 /// preserved untouched.
-pub fn merged_content(
-    mut current: Map<String, Value>,
-    updates: &[(&str, String)],
-) -> String {
+pub fn merged_content(mut current: Map<String, Value>, updates: &[(&str, String)]) -> String {
     for (key, value) in updates {
         if value.trim().is_empty() {
             current.remove(*key);

@@ -103,7 +103,9 @@ fn open_body<R: Read + ?Sized, W: Write + ?Sized>(
     key: &[u8; 32],
 ) -> Result<()> {
     let mut prefix = [0u8; PREFIX_LEN];
-    reader.read_exact(&mut prefix).map_err(|_| Error::BadHeader)?;
+    reader
+        .read_exact(&mut prefix)
+        .map_err(|_| Error::BadHeader)?;
     let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
 
     // Read-ahead by one ciphertext chunk to identify the final chunk by the
@@ -165,7 +167,9 @@ pub fn open<R: Read + ?Sized, W: Write + ?Sized>(
     passphrase: &[u8],
 ) -> Result<()> {
     let mut magic = [0u8; MAGIC.len()];
-    reader.read_exact(&mut magic).map_err(|_| Error::BadHeader)?;
+    reader
+        .read_exact(&mut magic)
+        .map_err(|_| Error::BadHeader)?;
     if &magic != MAGIC {
         return Err(Error::BadHeader);
     }

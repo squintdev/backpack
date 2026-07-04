@@ -54,7 +54,11 @@ fn calc_padded_len(unpadded: usize) -> usize {
     // 1 << (floor(log2(len-1)) + 1) — the bit length of (len-1) as a u32.
     let bits = u32::BITS - ((unpadded - 1) as u32).leading_zeros();
     let next_power = 1usize << bits;
-    let chunk = if next_power <= 256 { 32 } else { next_power / 8 };
+    let chunk = if next_power <= 256 {
+        32
+    } else {
+        next_power / 8
+    };
     chunk * ((unpadded - 1) / chunk + 1)
 }
 
@@ -140,7 +144,10 @@ mod tests {
     use crate::event::pubkey_hex;
 
     fn xonly(sk: &[u8; 32]) -> [u8; 32] {
-        hex::decode(pubkey_hex(sk).unwrap()).unwrap().try_into().unwrap()
+        hex::decode(pubkey_hex(sk).unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap()
     }
 
     #[test]

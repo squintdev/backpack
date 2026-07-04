@@ -24,7 +24,9 @@ fn fetch_real_contact_list_and_timeline() {
     let authors: Vec<String> = contacts.iter().take(20).map(|c| c.pubkey.clone()).collect();
     let events = fetch_timeline(&relays, authors, 15).expect("timeline fetch");
     assert!(!events.is_empty(), "expected some notes");
-    assert!(events.windows(2).all(|w| w[0].created_at >= w[1].created_at));
+    assert!(events
+        .windows(2)
+        .all(|w| w[0].created_at >= w[1].created_at));
     let mut ids: Vec<&String> = events.iter().map(|e| &e.id).collect();
     ids.dedup();
     assert_eq!(ids.len(), events.len(), "no duplicate events");

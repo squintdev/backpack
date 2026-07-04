@@ -25,7 +25,11 @@ const BANNER: [&str; 6] = [
 ];
 
 pub fn render(f: &mut Frame, app: &App) {
-    let banner_h = if f.area().width >= 80 && f.area().height >= 22 { 8 } else { 2 };
+    let banner_h = if f.area().width >= 80 && f.area().height >= 22 {
+        8
+    } else {
+        2
+    };
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -99,7 +103,11 @@ pub fn render(f: &mut Frame, app: &App) {
             }
             Screen::Canary(mode) => {
                 render_canary(f, root[1], mode);
-                render_keybar(f, root[2], generic_keys(matches!(mode, CanaryMode::Menu(_))));
+                render_keybar(
+                    f,
+                    root[2],
+                    generic_keys(matches!(mode, CanaryMode::Menu(_))),
+                );
             }
         },
     }
@@ -114,7 +122,11 @@ pub fn render_working(f: &mut Frame, label: &str) {
         bold(alert()),
     )))
     .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL).border_style(phosphor()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(phosphor()),
+    );
     f.render_widget(p, area);
 }
 
@@ -135,13 +147,22 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
             &[("j/k", "scroll"), ("c", "copy"), ("enter/esc", "back")]
         }
         NostrMode::Results { .. } => &[("j/k", "scroll"), ("enter/esc", "back")],
-        NostrMode::Follows { confirm_unfollow: true, .. } => &[("y", "unfollow"), ("n", "cancel")],
-        NostrMode::Follows { .. } => {
-            &[("j/k", "select"), ("c", "copy npub"), ("d", "unfollow"), ("esc", "back")]
-        }
-        NostrMode::Explore { .. } => {
-            &[("j/k", "select"), ("f", "follow"), ("c", "copy npub"), ("esc", "back")]
-        }
+        NostrMode::Follows {
+            confirm_unfollow: true,
+            ..
+        } => &[("y", "unfollow"), ("n", "cancel")],
+        NostrMode::Follows { .. } => &[
+            ("j/k", "select"),
+            ("c", "copy npub"),
+            ("d", "unfollow"),
+            ("esc", "back"),
+        ],
+        NostrMode::Explore { .. } => &[
+            ("j/k", "select"),
+            ("f", "follow"),
+            ("c", "copy npub"),
+            ("esc", "back"),
+        ],
         NostrMode::Signer => &[("c", "copy bunker url"), ("esc", "stop & back")],
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
@@ -288,7 +309,10 @@ fn render_identities(
             ))),
         }
     } else {
-        lines.push(Line::from(Span::styled("generate an identity with g", dim())));
+        lines.push(Line::from(Span::styled(
+            "generate an identity with g",
+            dim(),
+        )));
     }
     if !st.status.is_empty() {
         lines.push(Line::from(""));
@@ -304,14 +328,20 @@ fn render_identities(
     match &st.mode {
         IdMode::New(form) => render_popup_form(f, form),
         IdMode::ConfirmDelete => {
-            let name = ids.get(st.selected).map(|i| i.name.clone()).unwrap_or_default();
+            let name = ids
+                .get(st.selected)
+                .map(|i| i.name.clone())
+                .unwrap_or_default();
             render_confirm(f, &format!("Delete {name}?  (y/n)"));
         }
         IdMode::RevealConfirm => {
             let area = centered(64, 6, f.area());
             f.render_widget(Clear, area);
             let lines = vec![
-                Line::from(Span::styled("Reveal the PRIVATE key (nsec)?", bold(alert()))),
+                Line::from(Span::styled(
+                    "Reveal the PRIVATE key (nsec)?",
+                    bold(alert()),
+                )),
                 Line::from(Span::styled(
                     "Anyone who gets it controls this identity forever.",
                     dim(),
@@ -331,7 +361,10 @@ fn render_identities(
             let area = centered(72, 6, f.area());
             f.render_widget(Clear, area);
             let lines = vec![
-                Line::from(Span::styled("private key — treat like a master password:", dim())),
+                Line::from(Span::styled(
+                    "private key — treat like a master password:",
+                    dim(),
+                )),
                 Line::from(""),
                 Line::from(Span::styled(nsec.clone(), bold(alert()))),
                 Line::from(""),
@@ -362,26 +395,49 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         NostrMode::SignerWho(form) => render_form_page(f, area, form),
         NostrMode::Signer => {} // rendered from app.signer in render()
         NostrMode::ExploreWho(form) => render_form_page(f, area, form),
-        NostrMode::Explore { entries, selected, status, .. } => {
-            render_explore(f, area, entries, *selected, status)
-        }
+        NostrMode::Explore {
+            entries,
+            selected,
+            status,
+            ..
+        } => render_explore(f, area, entries, *selected, status),
         NostrMode::DmsWho(form) | NostrMode::SendDm(form) => render_form_page(f, area, form),
-        NostrMode::ConfirmDm { recipient_label, text, .. } => {
+        NostrMode::ConfirmDm {
+            recipient_label,
+            text,
+            ..
+        } => {
             let lines = vec![
                 Line::from(Span::styled("encrypted DM (NIP-04)", bold(alert()))),
-                Line::from(Span::styled("text private · sender/recipient/time public", dim())),
+                Line::from(Span::styled(
+                    "text private · sender/recipient/time public",
+                    dim(),
+                )),
                 Line::from(""),
-                Line::from(vec![Span::styled("to   ", dim()), Span::styled(recipient_label.clone(), accent())]),
-                Line::from(vec![Span::styled("msg  ", dim()), Span::styled(text.clone(), phosphor())]),
+                Line::from(vec![
+                    Span::styled("to   ", dim()),
+                    Span::styled(recipient_label.clone(), accent()),
+                ]),
+                Line::from(vec![
+                    Span::styled("msg  ", dim()),
+                    Span::styled(text.clone(), phosphor()),
+                ]),
                 Line::from(""),
                 Line::from(Span::styled("y = send · n = cancel", dim())),
             ];
             f.render_widget(
-                Paragraph::new(lines).wrap(Wrap { trim: false }).block(titled_block(" ▞▞ CONFIRM ")),
+                Paragraph::new(lines)
+                    .wrap(Wrap { trim: false })
+                    .block(titled_block(" ▞▞ CONFIRM ")),
                 area,
             );
         }
-        NostrMode::Follows { entries, selected, confirm_unfollow, .. } => {
+        NostrMode::Follows {
+            entries,
+            selected,
+            confirm_unfollow,
+            ..
+        } => {
             let items: Vec<ListItem> = entries
                 .iter()
                 .map(|e| {
@@ -420,10 +476,19 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         }
         NostrMode::ConfirmPost { identity, text } => {
             let lines = vec![
-                Line::from(Span::styled("about to publish — public + permanent", bold(alert()))),
+                Line::from(Span::styled(
+                    "about to publish — public + permanent",
+                    bold(alert()),
+                )),
                 Line::from(""),
-                Line::from(vec![Span::styled("as   ", dim()), Span::styled(identity.clone(), accent())]),
-                Line::from(vec![Span::styled("note ", dim()), Span::styled(text.clone(), phosphor())]),
+                Line::from(vec![
+                    Span::styled("as   ", dim()),
+                    Span::styled(identity.clone(), accent()),
+                ]),
+                Line::from(vec![
+                    Span::styled("note ", dim()),
+                    Span::styled(text.clone(), phosphor()),
+                ]),
                 Line::from(""),
                 Line::from(Span::styled("y = publish · n = cancel", dim())),
             ];
@@ -434,9 +499,12 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
                 area,
             );
         }
-        NostrMode::Results { title, lines, scroll, .. } => {
-            render_lines_scrolled(f, area, title, lines, *scroll)
-        }
+        NostrMode::Results {
+            title,
+            lines,
+            scroll,
+            ..
+        } => render_lines_scrolled(f, area, title, lines, *scroll),
     }
 }
 
@@ -448,7 +516,9 @@ fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerSt
 
     let Some(s) = signer else {
         f.render_widget(
-            Paragraph::new("signer not running").style(dim()).block(titled_block(" ▞▞ SIGNER ")),
+            Paragraph::new("signer not running")
+                .style(dim())
+                .block(titled_block(" ▞▞ SIGNER ")),
             area,
         );
         return;
@@ -462,7 +532,10 @@ fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerSt
             Span::styled(s.relay.clone(), accent()),
         ]),
         Line::from(""),
-        Line::from(Span::styled("paste this bunker URL into your Nostr client:", dim())),
+        Line::from(Span::styled(
+            "paste this bunker URL into your Nostr client:",
+            dim(),
+        )),
         Line::from(Span::styled(s.url.clone(), bold(alert()))),
     ];
     f.render_widget(
@@ -473,7 +546,9 @@ fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerSt
     );
 
     let log = s.log.lock().unwrap();
-    let start = log.len().saturating_sub(rows[1].height.saturating_sub(2) as usize);
+    let start = log
+        .len()
+        .saturating_sub(rows[1].height.saturating_sub(2) as usize);
     let lines: Vec<Line> = log[start..]
         .iter()
         .map(|l| Line::from(Span::styled(l.clone(), phosphor())))
@@ -544,7 +619,9 @@ fn render_explore(
         lines.push(Line::from(Span::styled(status.to_string(), alert())));
     }
     f.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(titled_block(" ▞▞ PROFILE ")),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(titled_block(" ▞▞ PROFILE ")),
         cols[1],
     );
 }
@@ -739,5 +816,10 @@ fn centered(width_pct: u16, height: u16, area: Rect) -> Rect {
     let w = area.width * width_pct / 100;
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
-    Rect { x, y, width: w, height }
+    Rect {
+        x,
+        y,
+        width: w,
+        height,
+    }
 }

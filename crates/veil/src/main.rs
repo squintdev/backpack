@@ -137,9 +137,7 @@ fn decrypt(io: Io) -> Result<()> {
 fn keystore_passphrase() -> Result<String> {
     match std::env::var(KEYSTORE_PASS_ENV) {
         Ok(p) => Ok(p),
-        Err(_) => {
-            rpassword::prompt_password("Keystore passphrase: ").context("reading passphrase")
-        }
+        Err(_) => rpassword::prompt_password("Keystore passphrase: ").context("reading passphrase"),
     }
 }
 
@@ -230,8 +228,7 @@ where
                 name.push(".tmp");
                 path.with_file_name(name)
             };
-            let file =
-                File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+            let file = File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
             let mut w = BufWriter::new(file);
             match op(&mut reader, &mut w).and_then(|_| Ok(w.flush()?)) {
                 Ok(()) => {

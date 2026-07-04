@@ -91,7 +91,9 @@ pub enum IdMode {
     /// Confirming a private-key reveal.
     RevealConfirm,
     /// Showing the nsec (private key) — c copies, Esc clears.
-    Reveal { nsec: String },
+    Reveal {
+        nsec: String,
+    },
 }
 
 pub struct IdentitiesState {
@@ -104,13 +106,19 @@ pub enum NostrMode {
     Menu(usize),
     Whoami(Form),
     Post(Form),
-    ConfirmPost { identity: String, text: String },
+    ConfirmPost {
+        identity: String,
+        text: String,
+    },
     Fetch(Form),
     Timeline(Form),
     Follow(Form),
     FollowsForm(Form),
     ProfileWho(Form),
-    ProfileEdit { identity: String, form: Form },
+    ProfileEdit {
+        identity: String,
+        form: Form,
+    },
     SignerWho(Form),
     Signer,
     ExploreWho(Form),
@@ -122,7 +130,12 @@ pub enum NostrMode {
     },
     DmsWho(Form),
     SendDm(Form),
-    ConfirmDm { identity: String, recipient_hex: String, recipient_label: String, text: String },
+    ConfirmDm {
+        identity: String,
+        recipient_hex: String,
+        recipient_label: String,
+        text: String,
+    },
     /// Interactive follow list: j/k select, d unfollow (with confirm).
     Follows {
         identity: String,
@@ -187,8 +200,14 @@ pub const VEIL_MENU: &[&str] = &[
 
 pub enum ScrubMode {
     Form(Form),
-    Report { path: String, lines: Vec<String>, changed: bool },
-    Results { lines: Vec<String> },
+    Report {
+        path: String,
+        lines: Vec<String>,
+        changed: bool,
+    },
+    Results {
+        lines: Vec<String>,
+    },
 }
 
 pub enum SplitMode {
@@ -245,30 +264,85 @@ pub enum Screen {
 /// Slow work queued by a key handler; the main loop draws a WORKING frame,
 /// then calls [`App::execute`].
 pub enum Pending {
-    NostrPost { identity: String, text: String },
-    NostrFetch { author: String, limit: u32 },
-    NostrTimeline { identity: String, limit: u32 },
-    NostrFollow { identity: String, author: String, name: Option<String> },
-    NostrUnfollow { identity: String, author_hex: String },
-    NostrFollows { identity: String },
-    NostrProfileLoad { identity: String },
-    NostrProfileSave { identity: String, updates: Vec<(String, String)> },
-    NostrDmsLoad { identity: String },
-    NostrDmSend { identity: String, recipient_hex: String, text: String },
-    NostrExplore { identity: String },
-    NostrExploreFollow { identity: String, author_hex: String },
-    NostrSignerStart { identity: String },
-    VeilEncPass { input: String, output: String, pass: String },
-    VeilEncRecipient { input: String, pub_path: String, output: String },
-    VeilDecPass { input: String, output: String, pass: String },
-    VeilDecIdentity { input: String, identity: String, output: String },
+    NostrPost {
+        identity: String,
+        text: String,
+    },
+    NostrFetch {
+        author: String,
+        limit: u32,
+    },
+    NostrTimeline {
+        identity: String,
+        limit: u32,
+    },
+    NostrFollow {
+        identity: String,
+        author: String,
+        name: Option<String>,
+    },
+    NostrUnfollow {
+        identity: String,
+        author_hex: String,
+    },
+    NostrFollows {
+        identity: String,
+    },
+    NostrProfileLoad {
+        identity: String,
+    },
+    NostrProfileSave {
+        identity: String,
+        updates: Vec<(String, String)>,
+    },
+    NostrDmsLoad {
+        identity: String,
+    },
+    NostrDmSend {
+        identity: String,
+        recipient_hex: String,
+        text: String,
+    },
+    NostrExplore {
+        identity: String,
+    },
+    NostrExploreFollow {
+        identity: String,
+        author_hex: String,
+    },
+    NostrSignerStart {
+        identity: String,
+    },
+    VeilEncPass {
+        input: String,
+        output: String,
+        pass: String,
+    },
+    VeilEncRecipient {
+        input: String,
+        pub_path: String,
+        output: String,
+    },
+    VeilDecPass {
+        input: String,
+        output: String,
+        pass: String,
+    },
+    VeilDecIdentity {
+        input: String,
+        identity: String,
+        output: String,
+    },
 }
 
 // ---------------------------------------------------------------- gate + app
 
 pub enum Gate {
     /// Waiting for the keystore passphrase (masked, in-TUI).
-    Locked { form: Form, creating: bool },
+    Locked {
+        form: Form,
+        creating: bool,
+    },
     Open(Session),
 }
 
@@ -315,9 +389,16 @@ impl App {
         } else {
             vec![Field::masked("keystore passphrase")]
         };
-        let title = if creating { "create keystore" } else { "unlock keystore" };
+        let title = if creating {
+            "create keystore"
+        } else {
+            "unlock keystore"
+        };
         App {
-            gate: Gate::Locked { form: Form::new(title, fields), creating },
+            gate: Gate::Locked {
+                form: Form::new(title, fields),
+                creating,
+            },
             screen: Screen::Home { selected: 0 },
             pending: None,
             should_quit: false,
@@ -449,9 +530,7 @@ impl App {
                             st.selected += 1;
                         }
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        st.selected = st.selected.saturating_sub(1)
-                    }
+                    KeyCode::Char('k') | KeyCode::Up => st.selected = st.selected.saturating_sub(1),
                     KeyCode::Char('g') => {
                         st.mode = IdMode::New(Form::new("new identity", vec![Field::new("name")]));
                     }
@@ -731,7 +810,11 @@ impl App {
                         } else if let Err(e) = session.nostr_key(&identity) {
                             form.error = Some(format!("{e}"));
                         } else {
-                            queue = Some(Pending::NostrFollow { identity, author, name });
+                            queue = Some(Pending::NostrFollow {
+                                identity,
+                                author,
+                                name,
+                            });
                         }
                     }
                 },
@@ -759,7 +842,12 @@ impl App {
                         }
                     }
                 },
-                NostrMode::Explore { identity, entries, selected, .. } => match code {
+                NostrMode::Explore {
+                    identity,
+                    entries,
+                    selected,
+                    ..
+                } => match code {
                     KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(5),
                     KeyCode::Char('j') | KeyCode::Down if *selected + 1 < entries.len() => {
                         *selected += 1
@@ -818,7 +906,12 @@ impl App {
                         }
                     }
                 },
-                NostrMode::ConfirmDm { identity, recipient_hex, text, .. } => match code {
+                NostrMode::ConfirmDm {
+                    identity,
+                    recipient_hex,
+                    text,
+                    ..
+                } => match code {
                     KeyCode::Char('y') => {
                         queue = Some(Pending::NostrDmSend {
                             identity: identity.clone(),
@@ -873,7 +966,12 @@ impl App {
                         });
                     }
                 },
-                NostrMode::Follows { identity, entries, selected, confirm_unfollow } => {
+                NostrMode::Follows {
+                    identity,
+                    entries,
+                    selected,
+                    confirm_unfollow,
+                } => {
                     if *confirm_unfollow {
                         match code {
                             KeyCode::Char('y') => {
@@ -891,9 +989,7 @@ impl App {
                     } else {
                         match code {
                             KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(4),
-                            KeyCode::Char('j') | KeyCode::Down
-                                if *selected + 1 < entries.len() =>
-                            {
+                            KeyCode::Char('j') | KeyCode::Down if *selected + 1 < entries.len() => {
                                 *selected += 1;
                             }
                             KeyCode::Char('k') | KeyCode::Up => {
@@ -911,7 +1007,12 @@ impl App {
                         }
                     }
                 }
-                NostrMode::Results { lines, copy, scroll, .. } => match code {
+                NostrMode::Results {
+                    lines,
+                    copy,
+                    scroll,
+                    ..
+                } => match code {
                     KeyCode::Char('j') | KeyCode::Down => {
                         *scroll = scroll.saturating_add(1).min(lines.len() as u16)
                     }
@@ -1016,7 +1117,11 @@ impl App {
                         let path = form.value(0).to_string();
                         match scrub_scan(&path) {
                             Ok((lines, changed)) => {
-                                *mode = ScrubMode::Report { path, lines, changed }
+                                *mode = ScrubMode::Report {
+                                    path,
+                                    lines,
+                                    changed,
+                                }
                             }
                             Err(e) => form.error = Some(format!("{e}")),
                         }
@@ -1096,7 +1201,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match split_deal(form) {
                         Ok(lines) => {
-                            *mode = SplitMode::Results { title: "shares dealt".into(), lines }
+                            *mode = SplitMode::Results {
+                                title: "shares dealt".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1106,8 +1214,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match split_combine(form) {
                         Ok(lines) => {
-                            *mode =
-                                SplitMode::Results { title: "secret recovered".into(), lines }
+                            *mode = SplitMode::Results {
+                                title: "secret recovered".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1169,7 +1279,12 @@ impl App {
                     FormEvent::Cancel => *mode = SignMode::Menu(0),
                     FormEvent::Editing => {}
                     FormEvent::Submit => match sign_file(session, form) {
-                        Ok(lines) => *mode = SignMode::Results { title: "signed".into(), lines },
+                        Ok(lines) => {
+                            *mode = SignMode::Results {
+                                title: "signed".into(),
+                                lines,
+                            }
+                        }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
                 },
@@ -1178,7 +1293,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match verify_file(form) {
                         Ok(lines) => {
-                            *mode = SignMode::Results { title: "verification".into(), lines }
+                            *mode = SignMode::Results {
+                                title: "verification".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1253,7 +1371,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match canary_new(session, form) {
                         Ok(lines) => {
-                            *mode = CanaryMode::Results { title: "canary signed".into(), lines }
+                            *mode = CanaryMode::Results {
+                                title: "canary signed".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1263,7 +1384,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match canary_renew(session, form) {
                         Ok(lines) => {
-                            *mode = CanaryMode::Results { title: "canary renewed".into(), lines }
+                            *mode = CanaryMode::Results {
+                                title: "canary renewed".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1273,7 +1397,10 @@ impl App {
                     FormEvent::Editing => {}
                     FormEvent::Submit => match canary_check(form) {
                         Ok(lines) => {
-                            *mode = CanaryMode::Results { title: "canary status".into(), lines }
+                            *mode = CanaryMode::Results {
+                                title: "canary status".into(),
+                                lines,
+                            }
                         }
                         Err(e) => form.error = Some(format!("{e}")),
                     },
@@ -1312,7 +1439,12 @@ impl App {
                         }
                         Err(e) => (vec![format!("failed: {e}")], None),
                     };
-                    *mode = NostrMode::Results { title: "post".into(), lines, copy, scroll: 0 };
+                    *mode = NostrMode::Results {
+                        title: "post".into(),
+                        lines,
+                        copy,
+                        scroll: 0,
+                    };
                 }
             }
             Pending::NostrFetch { author, limit } => {
@@ -1337,7 +1469,11 @@ impl App {
                     };
                 }
             }
-            Pending::NostrFollow { identity, author, name } => {
+            Pending::NostrFollow {
+                identity,
+                author,
+                name,
+            } => {
                 let result = nostr_follow(session, &identity, &author, name);
                 if let Screen::Nostr(mode) = &mut self.screen {
                     *mode = NostrMode::Results {
@@ -1348,7 +1484,10 @@ impl App {
                     };
                 }
             }
-            Pending::NostrUnfollow { identity, author_hex } => {
+            Pending::NostrUnfollow {
+                identity,
+                author_hex,
+            } => {
                 let result = nostr_unfollow(session, &identity, &author_hex)
                     .and_then(|_| nostr_follow_entries(session, &identity));
                 if let Screen::Nostr(mode) = &mut self.screen {
@@ -1431,7 +1570,10 @@ impl App {
                     };
                 }
             }
-            Pending::NostrExploreFollow { identity, author_hex } => {
+            Pending::NostrExploreFollow {
+                identity,
+                author_hex,
+            } => {
                 let followed = nostr_follow(session, &identity, &author_hex, None);
                 let rebuilt = nostr_suggestions(session, &identity);
                 if let Screen::Nostr(mode) = &mut self.screen {
@@ -1454,26 +1596,24 @@ impl App {
                     };
                 }
             }
-            Pending::NostrSignerStart { identity } => {
-                match start_signer(session, &identity) {
-                    Ok(state) => {
-                        self.signer = Some(state);
-                        if let Screen::Nostr(mode) = &mut self.screen {
-                            *mode = NostrMode::Signer;
-                        }
-                    }
-                    Err(e) => {
-                        if let Screen::Nostr(mode) = &mut self.screen {
-                            *mode = NostrMode::Results {
-                                title: "signer".into(),
-                                lines: vec![format!("failed: {e}")],
-                                copy: None,
-                                scroll: 0,
-                            };
-                        }
+            Pending::NostrSignerStart { identity } => match start_signer(session, &identity) {
+                Ok(state) => {
+                    self.signer = Some(state);
+                    if let Screen::Nostr(mode) = &mut self.screen {
+                        *mode = NostrMode::Signer;
                     }
                 }
-            }
+                Err(e) => {
+                    if let Screen::Nostr(mode) = &mut self.screen {
+                        *mode = NostrMode::Results {
+                            title: "signer".into(),
+                            lines: vec![format!("failed: {e}")],
+                            copy: None,
+                            scroll: 0,
+                        };
+                    }
+                }
+            },
             Pending::NostrDmsLoad { identity } => {
                 let result = nostr_dms(session, &identity);
                 if let Screen::Nostr(mode) = &mut self.screen {
@@ -1485,7 +1625,11 @@ impl App {
                     };
                 }
             }
-            Pending::NostrDmSend { identity, recipient_hex, text } => {
+            Pending::NostrDmSend {
+                identity,
+                recipient_hex,
+                text,
+            } => {
                 let result = nostr_dm_send(session, &identity, &recipient_hex, &text);
                 if let Screen::Nostr(mode) = &mut self.screen {
                     *mode = NostrMode::Results {
@@ -1496,19 +1640,35 @@ impl App {
                     };
                 }
             }
-            Pending::VeilEncPass { input, output, pass } => {
+            Pending::VeilEncPass {
+                input,
+                output,
+                pass,
+            } => {
                 let r = veil_run_enc_pass(&input, &output, &pass);
                 self.finish_veil(r);
             }
-            Pending::VeilEncRecipient { input, pub_path, output } => {
+            Pending::VeilEncRecipient {
+                input,
+                pub_path,
+                output,
+            } => {
                 let r = veil_run_enc_recipient(&input, &pub_path, &output);
                 self.finish_veil(r);
             }
-            Pending::VeilDecPass { input, output, pass } => {
+            Pending::VeilDecPass {
+                input,
+                output,
+                pass,
+            } => {
                 let r = veil_run_dec_pass(&input, &output, &pass);
                 self.finish_veil(r);
             }
-            Pending::VeilDecIdentity { input, identity, output } => {
+            Pending::VeilDecIdentity {
+                input,
+                identity,
+                output,
+            } => {
                 let result = match session.store.get(&identity) {
                     Some(kp) => {
                         let sk = kp.x_secret();
@@ -1524,7 +1684,12 @@ impl App {
     fn finish_veil(&mut self, result: Result<Vec<String>>) {
         if let Screen::Veil(mode) = &mut self.screen {
             match result {
-                Ok(lines) => *mode = VeilMode::Results { title: "done".into(), lines },
+                Ok(lines) => {
+                    *mode = VeilMode::Results {
+                        title: "done".into(),
+                        lines,
+                    }
+                }
                 Err(e) => match mode {
                     VeilMode::Form(_, form) => form.error = Some(format!("{e}")),
                     _ => {
@@ -1543,7 +1708,9 @@ impl App {
 
 fn export_identity(session: &Session, selected: usize) -> Result<String> {
     let ids = session.identities();
-    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    let id = ids
+        .get(selected)
+        .ok_or_else(|| anyhow!("nothing selected"))?;
     let file = format!("{}.pub", id.name);
     std::fs::write(&file, format!("{}\n", id.to_line()))?;
     Ok(file)
@@ -1551,7 +1718,9 @@ fn export_identity(session: &Session, selected: usize) -> Result<String> {
 
 fn nostr_init_selected(session: &mut Session, selected: usize) -> Result<String> {
     let ids = session.identities();
-    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    let id = ids
+        .get(selected)
+        .ok_or_else(|| anyhow!("nothing selected"))?;
     let name = id.name.clone();
     if session.store.nostr_init(&name)? {
         session.save()?;
@@ -1564,7 +1733,9 @@ fn nostr_init_selected(session: &mut Session, selected: usize) -> Result<String>
 /// The npub of the identity at `selected`, for clipboard copy.
 fn selected_npub(session: &Session, selected: usize) -> Result<String> {
     let ids = session.identities();
-    let id = ids.get(selected).ok_or_else(|| anyhow!("nothing selected"))?;
+    let id = ids
+        .get(selected)
+        .ok_or_else(|| anyhow!("nothing selected"))?;
     Ok(nostr_whoami(session, &id.name)?
         .into_iter()
         .next()
@@ -1707,8 +1878,7 @@ fn nostr_follow(
     let sk = session.nostr_key(identity)?;
     let target = bp_nostr::nip19::pubkey_to_hex(author)?;
     let relays = bp_nostr::client::resolve_relays(&[]);
-    let count =
-        bp_nostr::client::follow(&relays, &sk, &target, name).map_err(|e| anyhow!(e))?;
+    let count = bp_nostr::client::follow(&relays, &sk, &target, name).map_err(|e| anyhow!(e))?;
     Ok(vec![format!("now following {count} author(s)")])
 }
 
@@ -1737,20 +1907,15 @@ fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
     let stop_thread = stop.clone();
     let log_thread = log.clone();
     let handle = std::thread::spawn(move || {
-        let result = bp_nostr::client::run_signer(
-            &relay_thread,
-            &sk_bytes,
-            &secret,
-            &stop_thread,
-            |l| {
+        let result =
+            bp_nostr::client::run_signer(&relay_thread, &sk_bytes, &secret, &stop_thread, |l| {
                 let mut g = log_thread.lock().unwrap();
                 g.push(format!("{} · {} → {}", l.client, l.method, l.outcome));
                 let len = g.len();
                 if len > 200 {
                     g.drain(0..len - 200);
                 }
-            },
-        );
+            });
         if let Err(e) = result {
             log_thread.lock().unwrap().push(format!("stopped: {e}"));
         }
@@ -1818,7 +1983,10 @@ fn nostr_dms(session: &Session, identity: &str) -> Result<Vec<String>> {
         }
         lines.push(String::new());
     }
-    lines.push(format!("({} messages, decrypted locally — j/k to scroll)", dms.len()));
+    lines.push(format!(
+        "({} messages, decrypted locally — j/k to scroll)",
+        dms.len()
+    ));
     Ok(lines)
 }
 
@@ -1946,7 +2114,11 @@ fn veil_pending(op: usize, form: &Form) -> Result<Pending> {
             if form.value(3) != pass {
                 bail!("passphrases do not match");
             }
-            Ok(Pending::VeilEncPass { input, output: form.value(1).to_string(), pass })
+            Ok(Pending::VeilEncPass {
+                input,
+                output: form.value(1).to_string(),
+                pass,
+            })
         }
         1 => {
             let pub_path = form.value(1).to_string();
@@ -1964,7 +2136,11 @@ fn veil_pending(op: usize, form: &Form) -> Result<Pending> {
             if pass.is_empty() {
                 bail!("passphrase must not be empty");
             }
-            Ok(Pending::VeilDecPass { input, output: form.value(1).to_string(), pass })
+            Ok(Pending::VeilDecPass {
+                input,
+                output: form.value(1).to_string(),
+                pass,
+            })
         }
         _ => {
             let identity = form.value(1).to_string();
@@ -2098,8 +2274,7 @@ fn split_deal(form: &Form) -> Result<Vec<String>> {
 fn split_combine(form: &Form) -> Result<Vec<String>> {
     let mut share_lines = Vec::new();
     for path in form.value(0).split_whitespace() {
-        let text =
-            std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?;
+        let text = std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?;
         share_lines.extend(
             text.lines()
                 .map(str::trim)
@@ -2160,7 +2335,11 @@ fn verify_file(form: &Form) -> Result<Vec<String>> {
 fn canary_new(session: &Session, form: &Form) -> Result<Vec<String>> {
     let identity = form.value(0);
     let statement = form.value(1);
-    let days: u64 = form.value(2).trim().parse().map_err(|_| anyhow!("days must be a number"))?;
+    let days: u64 = form
+        .value(2)
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("days must be a number"))?;
     let out = form.value(3);
     let kp = session
         .store
@@ -2178,7 +2357,11 @@ fn canary_new(session: &Session, form: &Form) -> Result<Vec<String>> {
 fn canary_renew(session: &Session, form: &Form) -> Result<Vec<String>> {
     let path = form.value(0);
     let identity = form.value(1);
-    let days: u64 = form.value(2).trim().parse().map_err(|_| anyhow!("days must be a number"))?;
+    let days: u64 = form
+        .value(2)
+        .trim()
+        .parse()
+        .map_err(|_| anyhow!("days must be a number"))?;
     let old = canary::Canary::parse(
         &std::fs::read_to_string(path).map_err(|e| anyhow!("reading {path}: {e}"))?,
     )?;
@@ -2208,7 +2391,9 @@ fn canary_check(form: &Form) -> Result<Vec<String>> {
             &std::fs::read_to_string(pub_path).map_err(|e| anyhow!("reading {pub_path}: {e}"))?,
         )?;
         if trusted.ed != c.identity.ed {
-            return Ok(vec!["BAD: signed by a different key than the trusted .pub".into()]);
+            return Ok(vec![
+                "BAD: signed by a different key than the trusted .pub".into()
+            ]);
         }
     }
     if c.verify().is_err() {
@@ -2217,8 +2402,7 @@ fn canary_check(form: &Form) -> Result<Vec<String>> {
     let prev_path = form.value(1);
     if !prev_path.trim().is_empty() {
         let prev = canary::Canary::parse(
-            &std::fs::read_to_string(prev_path)
-                .map_err(|e| anyhow!("reading {prev_path}: {e}"))?,
+            &std::fs::read_to_string(prev_path).map_err(|e| anyhow!("reading {prev_path}: {e}"))?,
         )?;
         prev.verify()?;
         if let Err(e) = c.check_succession(&prev) {
@@ -2227,14 +2411,21 @@ fn canary_check(form: &Form) -> Result<Vec<String>> {
     }
 
     let mut lines = vec![
-        format!("signer:   {} [{}]", c.identity.name, c.identity.fingerprint()),
+        format!(
+            "signer:   {} [{}]",
+            c.identity.name,
+            c.identity.fingerprint()
+        ),
         format!("sequence: {}", c.sequence),
         format!("issued:   {}", canary::format_ts(c.issued)),
         format!("expires:  {}", canary::format_ts(c.expires)),
     ];
     lines.push(match c.status(canary::now_unix()) {
         canary::Status::Valid { remaining } => {
-            format!("status:   ALIVE ({} remaining)", canary::format_duration(remaining))
+            format!(
+                "status:   ALIVE ({} remaining)",
+                canary::format_duration(remaining)
+            )
         }
         canary::Status::Expired { overdue } => format!(
             "status:   EXPIRED ({} overdue) — treat as tripped",
@@ -2264,10 +2455,7 @@ mod tests {
 
     fn fresh_store_env() -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let p = std::env::temp_dir().join(format!(
-            "launcher-app-{}-{n}.veil",
-            std::process::id()
-        ));
+        let p = std::env::temp_dir().join(format!("launcher-app-{}-{n}.veil", std::process::id()));
         std::env::set_var("BACKPACK_KEYRING", &p);
         p
     }
@@ -2480,7 +2668,10 @@ mod tests {
         app.on_key(KeyCode::Enter); // submit
         let op = app.pending.take().expect("encrypt queued");
         app.execute(op);
-        assert!(matches!(&app.screen, Screen::Veil(VeilMode::Results { .. })));
+        assert!(matches!(
+            &app.screen,
+            Screen::Veil(VeilMode::Results { .. })
+        ));
         let enc = dir.join("msg.txt.veil");
         assert!(enc.exists());
 
@@ -2579,7 +2770,10 @@ mod tests {
         app.on_key(KeyCode::Enter); // identity prefilled -> message file
         type_str(&mut app, &msg.display().to_string());
         app.on_key(KeyCode::Enter);
-        assert!(matches!(&app.screen, Screen::Sign(SignMode::Results { .. })));
+        assert!(matches!(
+            &app.screen,
+            Screen::Sign(SignMode::Results { .. })
+        ));
         let sig = dir.join("m.txt.sig");
         assert!(sig.exists());
 
@@ -2626,7 +2820,10 @@ mod tests {
         app.on_key(KeyCode::Up); // -> WHOAMI
         app.on_key(KeyCode::Enter); // WHOAMI form (identity prefilled)
         app.on_key(KeyCode::Enter); // submit
-        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::Results { .. })));
+        assert!(matches!(
+            &app.screen,
+            Screen::Nostr(NostrMode::Results { .. })
+        ));
         app.on_key(KeyCode::Char('c'));
         assert_eq!(app.clipboard.take().as_deref(), Some(staged.as_str()));
         std::fs::remove_file(&store).ok();
@@ -2797,7 +2994,10 @@ mod tests {
         app.on_key(KeyCode::Enter); // -> message
         type_str(&mut app, "hi self");
         app.on_key(KeyCode::Enter); // submit -> confirm
-        assert!(matches!(&app.screen, Screen::Nostr(NostrMode::ConfirmDm { .. })));
+        assert!(matches!(
+            &app.screen,
+            Screen::Nostr(NostrMode::ConfirmDm { .. })
+        ));
         assert!(app.pending.is_none());
         app.on_key(KeyCode::Char('n')); // decline
         assert!(app.pending.is_none());
@@ -2877,18 +3077,27 @@ mod tests {
         app.on_key(KeyCode::Char('x')); // ask
         assert!(matches!(
             &app.screen,
-            Screen::Identities(IdentitiesState { mode: IdMode::RevealConfirm, .. })
+            Screen::Identities(IdentitiesState {
+                mode: IdMode::RevealConfirm,
+                ..
+            })
         ));
         app.on_key(KeyCode::Char('n')); // decline -> no reveal
         assert!(matches!(
             &app.screen,
-            Screen::Identities(IdentitiesState { mode: IdMode::List, .. })
+            Screen::Identities(IdentitiesState {
+                mode: IdMode::List,
+                ..
+            })
         ));
 
         app.on_key(KeyCode::Char('x'));
         app.on_key(KeyCode::Char('y')); // confirm -> reveal
         match &app.screen {
-            Screen::Identities(IdentitiesState { mode: IdMode::Reveal { nsec }, .. }) => {
+            Screen::Identities(IdentitiesState {
+                mode: IdMode::Reveal { nsec },
+                ..
+            }) => {
                 assert!(nsec.starts_with("nsec1"));
             }
             _ => panic!("expected reveal"),
@@ -2898,7 +3107,10 @@ mod tests {
         app.on_key(KeyCode::Esc); // hide
         assert!(matches!(
             &app.screen,
-            Screen::Identities(IdentitiesState { mode: IdMode::List, .. })
+            Screen::Identities(IdentitiesState {
+                mode: IdMode::List,
+                ..
+            })
         ));
         std::fs::remove_file(&store).ok();
     }

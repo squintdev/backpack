@@ -91,7 +91,10 @@ mod tests {
     const BOB: [u8; 32] = [11u8; 32];
 
     fn xonly(sk: &[u8; 32]) -> [u8; 32] {
-        hex::decode(pubkey_hex(sk).unwrap()).unwrap().try_into().unwrap()
+        hex::decode(pubkey_hex(sk).unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap()
     }
 
     #[test]
