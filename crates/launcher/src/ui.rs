@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::Frame;
 
 use crate::app::{
-    App, Gate, IdMode, NostrMode, Screen, ScrubMode, SignMode, SplitMode, VeilMode, MENU,
-    NOSTR_MENU, SIGN_MENU, SPLIT_MENU, VEIL_MENU,
+    App, CanaryMode, Gate, IdMode, NostrMode, Screen, ScrubMode, SignMode, SplitMode, VeilMode,
+    CANARY_MENU, MENU, NOSTR_MENU, SIGN_MENU, SPLIT_MENU, VEIL_MENU,
 };
 use crate::form::Form;
 use crate::session::Session;
@@ -96,6 +96,10 @@ pub fn render(f: &mut Frame, app: &App) {
             Screen::Sign(mode) => {
                 render_sign(f, root[1], mode);
                 render_keybar(f, root[2], generic_keys(matches!(mode, SignMode::Menu(_))));
+            }
+            Screen::Canary(mode) => {
+                render_canary(f, root[1], mode);
+                render_keybar(f, root[2], generic_keys(matches!(mode, CanaryMode::Menu(_))));
             }
         },
     }
@@ -576,6 +580,16 @@ fn render_sign(f: &mut Frame, area: Rect, mode: &SignMode) {
         SignMode::Menu(sel) => render_submenu(f, area, " ▞▞ SIGN/VERIFY ", SIGN_MENU, *sel),
         SignMode::Sign(form) | SignMode::Verify(form) => render_form_page(f, area, form),
         SignMode::Results { title, lines } => render_lines(f, area, title, lines),
+    }
+}
+
+fn render_canary(f: &mut Frame, area: Rect, mode: &CanaryMode) {
+    match mode {
+        CanaryMode::Menu(sel) => render_submenu(f, area, " ▞▞ CANARY ", CANARY_MENU, *sel),
+        CanaryMode::New(form) | CanaryMode::Renew(form) | CanaryMode::Check(form) => {
+            render_form_page(f, area, form)
+        }
+        CanaryMode::Results { title, lines } => render_lines(f, area, title, lines),
     }
 }
 

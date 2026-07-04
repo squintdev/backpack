@@ -15,7 +15,7 @@ backpack
    it asks twice and creates the encrypted keystore; afterwards it unlocks the
    existing one. The store stays unlocked for the whole session, so no screen
    ever prompts again.
-2. **Home.** The tool menu. `↑↓`/`jk` or `1`–`6` select, `Enter` opens,
+2. **Home.** The tool menu. `↑↓`/`jk` or `1`–`7` select, `Enter` opens,
    `!` drops to a real shell (exit to return), `q` quits.
 3. **Tool screens.** Each tool is native — forms with `Tab`/`Enter` field
    navigation, `Esc` backs out one level. Slow operations (relay calls,
@@ -31,8 +31,9 @@ backpack
 | SCRUB | Scan a file, show exactly what metadata would be removed, then write a `.clean.` copy on confirm. |
 | SPLIT | DEAL a secret file into k-of-n share files; COMBINE shares back (display or write to file). |
 | SIGN/VERIFY | Sign a file with an identity (`<file>.sig`); verify anyone's signature from their `.pub` line. |
+| CANARY | NEW signs a fresh warrant canary (statement, validity window), RENEW re-signs an existing one (sequence+1, fresh window), CHECK verifies anyone's canary — signature, expiry, optional signer pinning and rollback detection. |
 
-The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`) remain for
+The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`, `canary`) remain for
 scripting and pipes — the launcher and the CLIs share the same libraries, so
 behavior is identical.
 

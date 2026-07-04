@@ -26,6 +26,7 @@ backpack/
     ├── scrub/            metadata stripper CLI (lib + bin)
     ├── split/            Shamir secret sharing CLI (lib + bin)
     ├── keyring/          Ed25519/X25519/secp256k1 identity manager (lib + bin + TUI)
+    ├── canary/           warrant canary: signed, expiring statements (lib + bin)
     ├── bp-nostr/         `nostr` minimal Nostr client (NIP-01)
     └── launcher/         `backpack` boot menu TUI (cyberdeck entry point)
 ```
@@ -153,6 +154,24 @@ BPSIG1 <ed25519 signature hex>
 An interactive terminal UI over the same store is available as `keyring-tui`
 (browse, generate, export, delete). Run `keyring --help` for all CLI options.
 
+### `canary` — warrant canary
+
+A dead-man switch in document form. Sign a dated statement ("we have received
+no warrants") with a keyring identity, valid for a fixed window, carrying a
+monotonic sequence number. Republish it on a schedule; readers treat an
+expired, missing, or sequence-regressed canary as the signal.
+
+```sh
+canary new --key ops --days 30 --statement "No warrants received." -o canary.txt
+canary renew canary.txt --key ops --days 30 -o canary.txt   # sequence+1, fresh window
+canary check canary.txt --previous last-month.txt --pub ops.pub
+```
+
+`check` verifies the signature, pins the signer to a trusted `.pub` if given,
+detects rollback against the previously seen canary, and exits 2 on expiry so
+scripts can alarm. The whole canary is one copy-pasteable text document. See
+[docs/canary.md](docs/canary.md).
+
 ### `nostr` — Nostr client
 
 Publish and read notes on Nostr — decentralized, censorship-resistant
@@ -176,7 +195,7 @@ Every fetched event is signature-verified before display. Relays come from
 ### `backpack` — the TUI client
 
 The suite as one full-screen client: the keystore unlocks via an in-TUI masked
-prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify —
+prompt, and every tool — identities, nostr, veil, scrub, split, sign/verify, canary —
 is a native screen with forms and results panes. No shelling out. `!` drops to
 a real shell when you need one. Designed as the auto-start entry point for a
 terminal-only cyberdeck — amber phosphor monochrome, renders on the bare Linux
