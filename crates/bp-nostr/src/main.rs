@@ -280,9 +280,24 @@ fn run_bunker(identity: &str, relays: &[String]) -> Result<()> {
     println!("{url}");
     eprintln!("Waiting for requests — Ctrl-C to stop.");
 
+    let pairings_path = bp_nostr::pairings::default_path();
+    let preauthorized = pairings_path
+        .as_deref()
+        .map(|p| bp_nostr::pairings::load(p, identity))
+        .unwrap_or_default();
+    if !preauthorized.is_empty() {
+        eprintln!("{} paired client(s) restored", preauthorized.len());
+    }
+
     // No stop flag: the process runs until interrupted.
     let never = AtomicBool::new(false);
-    run_signer_multi(relays, &sk, &secret, &never, |l| {
+    let identity = identity.to_string();
+    run_signer_multi(relays, &sk, &secret, &never, &preauthorized, |l| {
+        if l.method == "connect" && l.outcome == "ok" {
+            if let Some(p) = &pairings_path {
+                let _ = bp_nostr::pairings::add(p, &identity, &l.client_pubkey);
+            }
+        }
         eprintln!("  {} {} → {}", l.client, l.method, l.outcome);
     })
     .map_err(|e| anyhow!(e))

@@ -201,7 +201,7 @@ fn remote_sign_across_relays() {
         let stop = stop.clone();
         std::thread::spawn(move || {
             let relays = vec![RELAY_A.to_string(), RELAY_B.to_string()];
-            let _ = run_signer_multi(&relays, &signer_sk, secret, &stop, |_| {});
+            let _ = run_signer_multi(&relays, &signer_sk, secret, &stop, &[], |_| {});
         })
     };
     std::thread::sleep(Duration::from_secs(2));
@@ -236,6 +236,58 @@ fn remote_sign_across_relays() {
     let ev: Event = serde_json::from_str(&s.result).unwrap();
     verify_event(&ev).unwrap();
     assert_eq!(ev.pubkey, signer_pk_hex);
+
+    stop.store(true, Ordering::Relaxed);
+    signer.join().unwrap();
+}
+
+/// The ditto.pub failure mode: a client pairs once, the signer restarts, and
+/// the client signs WITHOUT re-sending connect. Preauthorized pairings must
+/// carry the authorization across the restart.
+#[test]
+#[ignore = "runs a live signer against a public relay"]
+fn sign_after_restart_with_persisted_pairing() {
+    let signer_sk = [7u8; 32];
+    let signer_pk_hex = pubkey_hex(&signer_sk).unwrap();
+    let signer_pub: [u8; 32] = hex::decode(&signer_pk_hex).unwrap().try_into().unwrap();
+    let client_sk = [8u8; 32];
+    let client_pk_hex = pubkey_hex(&client_sk).unwrap();
+    let secret = "restart-secret";
+    let relays = vec![RELAY.to_string()];
+
+    // "Restarted" signer: no connect ever seen in this process — the pairing
+    // comes in via the preauthorized list, as loaded from the pairings file.
+    let stop = Arc::new(AtomicBool::new(false));
+    let signer = {
+        let stop = stop.clone();
+        let relays = relays.clone();
+        let pre = vec![client_pk_hex.clone()];
+        std::thread::spawn(move || {
+            let _ = run_signer_multi(&relays, &signer_sk, secret, &stop, &pre, |_| {});
+        })
+    };
+    std::thread::sleep(Duration::from_secs(2));
+
+    // Straight to sign_event, no connect.
+    let tmpl = serde_json::json!({
+        "kind": 1, "created_at": now(), "tags": [], "content": "after restart"
+    })
+    .to_string();
+    let s = rpc(
+        &client_sk,
+        &client_pk_hex,
+        &signer_pub,
+        &signer_pk_hex,
+        "sign_event",
+        serde_json::json!([tmpl]),
+    );
+    assert!(
+        s.error.is_none(),
+        "sign after restart failed: {:?}",
+        s.error
+    );
+    let ev: Event = serde_json::from_str(&s.result).unwrap();
+    verify_event(&ev).unwrap();
 
     stop.store(true, Ordering::Relaxed);
     signer.join().unwrap();

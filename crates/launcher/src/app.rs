@@ -2296,18 +2296,38 @@ fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
             .collect::<Vec<_>>(),
     ));
 
+    // Pairings persist across signer restarts: NIP-46 clients connect once
+    // and expect to stay authorized.
+    let pairings_path = bp_nostr::pairings::default_path();
+    let preauthorized = pairings_path
+        .as_deref()
+        .map(|p| bp_nostr::pairings::load(p, identity))
+        .unwrap_or_default();
+    if !preauthorized.is_empty() {
+        log.lock()
+            .unwrap()
+            .push(format!("{} paired client(s) restored", preauthorized.len()));
+    }
+
     let sk_bytes: [u8; 32] = *sk;
     let relay_label = relays.join(", ");
     let relays_thread = relays.clone();
     let stop_thread = stop.clone();
     let log_thread = log.clone();
+    let identity_thread = identity.to_string();
     let handle = std::thread::spawn(move || {
         let result = bp_nostr::client::run_signer_multi(
             &relays_thread,
             &sk_bytes,
             &secret,
             &stop_thread,
+            &preauthorized,
             |l| {
+                if l.method == "connect" && l.outcome == "ok" {
+                    if let Some(p) = &pairings_path {
+                        let _ = bp_nostr::pairings::add(p, &identity_thread, &l.client_pubkey);
+                    }
+                }
                 let mut g = log_thread.lock().unwrap();
                 g.push(format!("{} · {} → {}", l.client, l.method, l.outcome));
                 let len = g.len();
