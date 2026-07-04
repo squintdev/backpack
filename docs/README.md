@@ -13,6 +13,7 @@ crypto core (`bp-core`).
 | [`split`](split.md) | CLI | Shamir secret sharing: split a secret into `k`-of-`n` shares |
 | [`keyring`](keyring.md) | CLI + TUI + lib | Manage Ed25519/X25519 identities in an encrypted store |
 | [`canary`](canary.md) | CLI + lib | Warrant canaries: signed, expiring dead-man statements |
+| [`stamp`](stamp.md) | CLI + lib | Timestamp proofs: Bitcoin-anchored via OpenTimestamps |
 | [`nostr`](nostr.md) | CLI | Publish/read Nostr notes with a keyring identity |
 | [`backpack`](launcher.md) | TUI | The whole suite as one native TUI client (cyberdeck entry point) |
 
