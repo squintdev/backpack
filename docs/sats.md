@@ -49,8 +49,8 @@ Nothing is signed until you've seen the whole picture and typed `yes`
 ```text
 ─────────────────────────────────────────────
 send      50,000 sats
-to        tb1q9e9ft2mpejsw0k5zvuya9lp644afaf9veujxf4
-          check ends: tb1q9e9f … veujxf4
+to        tb1qexampleexampleexampleexampleexamplex9df00
+          check ends: tb1qexam … amplex9df00
 fee       210 sats (1.5 sat/vB)
 change    12,340 sats -> tb1q…
 balance   62,550 sats -> 12,340 sats
