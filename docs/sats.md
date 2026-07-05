@@ -98,8 +98,11 @@ other wallets; treat that string like the money itself.
 ## In the TUI
 
 The `backpack` launcher has a SATS screen (menu item 9): ADDRESS / BALANCE /
-HISTORY / SEND, with the same full confirmation panel (`y` broadcasts, `n`
-aborts) and the same refusal warnings.
+HISTORY / SEND / NETWORK, with the same full confirmation panel (`y`
+broadcasts, `n` aborts) and the same refusal warnings. NETWORK switches
+between signet and mainnet in-app, and the panel title always names the
+active network. Identities created before Bitcoin support are offered a
+seed in-app on first use — equivalent to `keyring btc-init`.
 
 ## Building note
 

@@ -282,6 +282,10 @@ pub const STAMP_MENU: &[&str] = &[
 
 pub enum SatsMode {
     Menu(usize),
+    /// The identity has no Bitcoin seed yet; y creates one in the keystore.
+    InitSeed {
+        identity: String,
+    },
     Address(Form),
     Balance(Form),
     History(Form),
@@ -302,6 +306,7 @@ pub const SATS_MENU: &[&str] = &[
     "BALANCE  confirmed + pending",
     "HISTORY  recent transactions",
     "SEND     pay someone (confirm before broadcast)",
+    "NETWORK  switch between signet and mainnet",
 ];
 
 pub enum Screen {
@@ -464,6 +469,8 @@ pub struct App {
     pub clipboard: Option<String>,
     /// The active NIP-46 signer, if the SIGNER screen is running one.
     pub signer: Option<SignerState>,
+    /// Bitcoin network for the SATS screen (toggleable; env sets the default).
+    pub sats_network: sats::Network,
 }
 
 impl App {
@@ -493,6 +500,7 @@ impl App {
             shell_requested: false,
             clipboard: None,
             signer: None,
+            sats_network: sats_env_network(),
         }
     }
 
@@ -1613,7 +1621,17 @@ impl App {
         let first = self.first_identity();
         let mut back_home = false;
         let mut queue: Option<Pending> = None;
+        let mut toggle_network = false;
+        let mut create_seed: Option<String> = None;
         {
+            // Screen and gate are disjoint fields, so both borrows coexist.
+            let has_seed = |identity: &str| match &self.gate {
+                Gate::Open(session) => session
+                    .store
+                    .get(identity)
+                    .is_some_and(|kp| kp.btc_seed().is_some()),
+                _ => false,
+            };
             let Screen::Sats(mode) = &mut self.screen else {
                 return;
             };
@@ -1630,7 +1648,7 @@ impl App {
                             0 => SatsMode::Address(Form::new("receive address", vec![id_field])),
                             1 => SatsMode::Balance(Form::new("balance", vec![id_field])),
                             2 => SatsMode::History(Form::new("history", vec![id_field])),
-                            _ => SatsMode::Send(Form::new(
+                            3 => SatsMode::Send(Form::new(
                                 "send bitcoin",
                                 vec![
                                     id_field,
@@ -1640,35 +1658,53 @@ impl App {
                                         .with_value("normal"),
                                 ],
                             )),
+                            _ => {
+                                toggle_network = true;
+                                SatsMode::Menu(*sel)
+                            }
                         };
                     }
+                    _ => {}
+                },
+                SatsMode::InitSeed { identity } => match code {
+                    KeyCode::Char('y') => create_seed = Some(identity.clone()),
+                    KeyCode::Char('n') | KeyCode::Esc => *mode = SatsMode::Menu(0),
                     _ => {}
                 },
                 SatsMode::Address(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = SatsMode::Menu(0),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
-                        queue = Some(Pending::SatsAddress {
-                            identity: form.value(0).to_string(),
-                        })
+                        let identity = form.value(0).to_string();
+                        if has_seed(&identity) {
+                            queue = Some(Pending::SatsAddress { identity });
+                        } else {
+                            *mode = SatsMode::InitSeed { identity };
+                        }
                     }
                 },
                 SatsMode::Balance(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = SatsMode::Menu(1),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
-                        queue = Some(Pending::SatsBalance {
-                            identity: form.value(0).to_string(),
-                        })
+                        let identity = form.value(0).to_string();
+                        if has_seed(&identity) {
+                            queue = Some(Pending::SatsBalance { identity });
+                        } else {
+                            *mode = SatsMode::InitSeed { identity };
+                        }
                     }
                 },
                 SatsMode::History(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = SatsMode::Menu(2),
                     FormEvent::Editing => {}
                     FormEvent::Submit => {
-                        queue = Some(Pending::SatsHistory {
-                            identity: form.value(0).to_string(),
-                        })
+                        let identity = form.value(0).to_string();
+                        if has_seed(&identity) {
+                            queue = Some(Pending::SatsHistory { identity });
+                        } else {
+                            *mode = SatsMode::InitSeed { identity };
+                        }
                     }
                 },
                 SatsMode::Send(form) => match form.on_key(code) {
@@ -1677,12 +1713,17 @@ impl App {
                     FormEvent::Submit => match form.value(2).replace([',', '_'], "").parse::<u64>()
                     {
                         Ok(sats) => {
-                            queue = Some(Pending::SatsPrepare {
-                                identity: form.value(0).to_string(),
-                                address: form.value(1).to_string(),
-                                sats,
-                                fee: form.value(3).to_string(),
-                            })
+                            let identity = form.value(0).to_string();
+                            if has_seed(&identity) {
+                                queue = Some(Pending::SatsPrepare {
+                                    identity,
+                                    address: form.value(1).to_string(),
+                                    sats,
+                                    fee: form.value(3).to_string(),
+                                });
+                            } else {
+                                *mode = SatsMode::InitSeed { identity };
+                            }
                         }
                         Err(_) => form.error = Some("amount must be a whole number of sats".into()),
                     },
@@ -1708,6 +1749,44 @@ impl App {
                 }
             }
         }
+        if toggle_network {
+            self.sats_network = match self.sats_network {
+                sats::Network::Bitcoin => sats::Network::Signet,
+                _ => sats::Network::Bitcoin,
+            };
+            let lines = match self.sats_network {
+                sats::Network::Bitcoin => vec![
+                    "network is now MAINNET — real money".into(),
+                    "sends still require full confirmation; guards stay on".into(),
+                ],
+                other => vec![format!("network is now {other:?} (test coins)")],
+            };
+            self.screen = Screen::Sats(SatsMode::Results {
+                title: "network".into(),
+                lines,
+            });
+        }
+        if let Some(identity) = create_seed {
+            let result = match &mut self.gate {
+                Gate::Open(session) => session
+                    .store
+                    .btc_init(&identity)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|_| session.save()),
+                _ => Err(anyhow!("locked")),
+            };
+            self.screen = Screen::Sats(SatsMode::Results {
+                title: "bitcoin seed".into(),
+                lines: match result {
+                    Ok(()) => vec![
+                        format!("Bitcoin seed created for {identity} and saved to the keystore"),
+                        "back up the keystore file — the seed lives inside it".into(),
+                        "now re-run your action".into(),
+                    ],
+                    Err(e) => vec![format!("failed: {e}")],
+                },
+            });
+        }
         if back_home {
             self.screen = Screen::Home { selected: 8 };
         }
@@ -1721,6 +1800,7 @@ impl App {
     /// Execute a queued slow operation (the main loop calls this after
     /// rendering a WORKING frame) and route the result to the right screen.
     pub fn execute(&mut self, op: Pending) {
+        let network = self.sats_network;
         let Gate::Open(session) = &self.gate else {
             return;
         };
@@ -1940,21 +2020,21 @@ impl App {
                 }
             }
             Pending::SatsAddress { identity } => {
-                let result = sats_address(session, &identity);
+                let result = sats_address(session, &identity, network);
                 if let Screen::Sats(mode) = &mut self.screen {
-                    *mode = sats_results("receive address", result);
+                    *mode = sats_results("receive address", result, network);
                 }
             }
             Pending::SatsBalance { identity } => {
-                let result = sats_balance(session, &identity);
+                let result = sats_balance(session, &identity, network);
                 if let Screen::Sats(mode) = &mut self.screen {
-                    *mode = sats_results("balance", result);
+                    *mode = sats_results("balance", result, network);
                 }
             }
             Pending::SatsHistory { identity } => {
-                let result = sats_history(session, &identity);
+                let result = sats_history(session, &identity, network);
                 if let Screen::Sats(mode) = &mut self.screen {
-                    *mode = sats_results("history", result);
+                    *mode = sats_results("history", result, network);
                 }
             }
             Pending::SatsPrepare {
@@ -1963,7 +2043,7 @@ impl App {
                 sats,
                 fee,
             } => {
-                let result = sats_prepare(session, &identity, &address, sats, &fee);
+                let result = sats_prepare(session, &identity, &address, sats, &fee, network);
                 if let Screen::Sats(mode) = &mut self.screen {
                     *mode = match result {
                         Ok((lines, tx_hex)) => SatsMode::ConfirmSend { lines, tx_hex },
@@ -1975,9 +2055,9 @@ impl App {
                 }
             }
             Pending::SatsBroadcast { tx_hex } => {
-                let result = sats_broadcast(&tx_hex);
+                let result = sats_broadcast(&tx_hex, network);
                 if let Screen::Sats(mode) = &mut self.screen {
-                    *mode = sats_results("broadcast", result);
+                    *mode = sats_results("broadcast", result, network);
                 }
             }
             Pending::StampFile { file } => {
@@ -2954,46 +3034,50 @@ fn stamp_info(proof_path: &str) -> Result<Vec<String>> {
 
 // ---------------------------------------------------------------- sats helpers
 
-fn sats_network() -> sats::Network {
+/// Default network at startup: $BACKPACK_BTC_NETWORK or signet.
+fn sats_env_network() -> sats::Network {
     std::env::var("BACKPACK_BTC_NETWORK")
         .ok()
         .and_then(|n| sats::parse_network(&n).ok())
         .unwrap_or(sats::Network::Signet)
 }
 
-fn sats_client() -> sats::esplora::Client {
-    let network = sats_network();
+fn sats_client(network: sats::Network) -> sats::esplora::Client {
     let url = std::env::var("BACKPACK_ESPLORA")
         .unwrap_or_else(|_| sats::default_esplora(network).to_string());
     sats::esplora::Client::new(&url)
 }
 
-fn sats_wallet(session: &Session, identity: &str) -> Result<sats::hd::Wallet> {
+fn sats_wallet(
+    session: &Session,
+    identity: &str,
+    network: sats::Network,
+) -> Result<sats::hd::Wallet> {
     let kp = session
         .store
         .get(identity)
         .ok_or_else(|| anyhow!("no identity named {identity:?}"))?;
-    let seed = kp.btc_seed().ok_or_else(|| {
-        anyhow!("{identity} has no Bitcoin seed yet (run `keyring btc-init {identity}`)")
-    })?;
-    Ok(sats::hd::Wallet::from_seed(&seed, sats_network())?)
+    let seed = kp
+        .btc_seed()
+        .ok_or_else(|| anyhow!("{identity} has no Bitcoin seed yet"))?;
+    Ok(sats::hd::Wallet::from_seed(&seed, network)?)
 }
 
-fn sats_results(title: &str, result: Result<Vec<String>>) -> SatsMode {
+fn sats_results(title: &str, result: Result<Vec<String>>, network: sats::Network) -> SatsMode {
     let mut lines = match result {
         Ok(l) => l,
         Err(e) => vec![format!("failed: {e}")],
     };
-    lines.push(format!("network: {:?}", sats_network()));
+    lines.push(format!("network: {network:?}"));
     SatsMode::Results {
         title: title.into(),
         lines,
     }
 }
 
-fn sats_address(session: &Session, identity: &str) -> Result<Vec<String>> {
-    let wallet = sats_wallet(session, identity)?;
-    let s = sats::wallet::scan(&wallet, &sats_client())?;
+fn sats_address(session: &Session, identity: &str, network: sats::Network) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity, network)?;
+    let s = sats::wallet::scan(&wallet, &sats_client(network))?;
     let key = wallet.key(sats::hd::Chain::External, s.next_receive)?;
     Ok(vec![
         key.address.to_string(),
@@ -3001,9 +3085,9 @@ fn sats_address(session: &Session, identity: &str) -> Result<Vec<String>> {
     ])
 }
 
-fn sats_balance(session: &Session, identity: &str) -> Result<Vec<String>> {
-    let wallet = sats_wallet(session, identity)?;
-    let s = sats::wallet::scan(&wallet, &sats_client())?;
+fn sats_balance(session: &Session, identity: &str, network: sats::Network) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity, network)?;
+    let s = sats::wallet::scan(&wallet, &sats_client(network))?;
     let mut lines = vec![format!("confirmed: {}", sats::fmt_sats(s.confirmed_sats))];
     if s.pending_sats != 0 {
         lines.push(format!("pending:   {}", sats::fmt_sats(s.pending_sats)));
@@ -3011,9 +3095,9 @@ fn sats_balance(session: &Session, identity: &str) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-fn sats_history(session: &Session, identity: &str) -> Result<Vec<String>> {
-    let wallet = sats_wallet(session, identity)?;
-    let client = sats_client();
+fn sats_history(session: &Session, identity: &str, network: sats::Network) -> Result<Vec<String>> {
+    let wallet = sats_wallet(session, identity, network)?;
+    let client = sats_client(network);
     let s = sats::wallet::scan(&wallet, &client)?;
     let entries = sats::wallet::history(&s, &client)?;
     if entries.is_empty() {
@@ -3034,9 +3118,10 @@ fn sats_prepare(
     address: &str,
     amount: u64,
     fee: &str,
+    network: sats::Network,
 ) -> Result<(Vec<String>, String)> {
-    let wallet = sats_wallet(session, identity)?;
-    let client = sats_client();
+    let wallet = sats_wallet(session, identity, network)?;
+    let client = sats_client(network);
     let s = sats::wallet::scan(&wallet, &client)?;
     let fee_rate = match fee.parse::<f64>() {
         Ok(n) if (0.9..=2000.0).contains(&n) => n,
@@ -3081,7 +3166,7 @@ fn sats_prepare(
         sats::fmt_sats(spend.spendable_before as i64),
         sats::fmt_sats(spend.spendable_before as i64 - amount as i64 - spend.fee as i64)
     ));
-    lines.push(format!("network  {:?}", sats_network()));
+    lines.push(format!("network  {network:?}"));
     if spend.fee * 20 > spend.amount {
         lines.push("⚠ fee exceeds 5% of the amount".into());
     }
@@ -3092,8 +3177,8 @@ fn sats_prepare(
     Ok((lines, tx_hex))
 }
 
-fn sats_broadcast(tx_hex: &str) -> Result<Vec<String>> {
-    let txid = sats_client().broadcast(tx_hex)?;
+fn sats_broadcast(tx_hex: &str, network: sats::Network) -> Result<Vec<String>> {
+    let txid = sats_client(network).broadcast(tx_hex)?;
     Ok(vec![
         format!("broadcast: {txid}"),
         "RBF enabled — fee can be bumped if stuck".into(),
@@ -3264,6 +3349,51 @@ mod tests {
             ),
         }
         assert!(app.pending.is_none());
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn sats_network_toggle_and_seed_check() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let mut app = unlocked_app();
+        assert_eq!(app.sats_network, sats::Network::Signet);
+
+        // Toggle to mainnet and back via the menu entry.
+        app.on_key(KeyCode::Char('9'));
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Char('k')); // wrap to last entry: NETWORK
+        app.on_key(KeyCode::Enter);
+        assert_eq!(app.sats_network, sats::Network::Bitcoin);
+        match &app.screen {
+            Screen::Sats(SatsMode::Results { lines, .. }) => {
+                assert!(lines.iter().any(|l| l.contains("MAINNET")), "{lines:?}")
+            }
+            _ => panic!("toggle should confirm on a results screen"),
+        }
+        app.on_key(KeyCode::Enter); // back to menu (selection resets)
+        app.on_key(KeyCode::Char('k')); // wrap to NETWORK again
+        app.on_key(KeyCode::Enter); // toggle back
+        assert_eq!(app.sats_network, sats::Network::Signet);
+        app.on_key(KeyCode::Enter); // dismiss results
+
+        // A freshly generated identity has a seed, so submits queue directly
+        // instead of prompting InitSeed.
+        app.on_key(KeyCode::Esc);
+        app.on_key(KeyCode::Char('1'));
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "fresh");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Esc);
+        app.on_key(KeyCode::Char('9'));
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // ADDRESS form
+        app.on_key(KeyCode::Enter); // submit (identity prefilled)
+        assert!(
+            matches!(app.pending, Some(Pending::SatsAddress { .. })),
+            "seeded identity must queue, not prompt"
+        );
         std::fs::remove_file(&store).ok();
     }
 

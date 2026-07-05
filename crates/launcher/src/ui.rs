@@ -55,7 +55,7 @@ pub fn render(f: &mut Frame, app: &App) {
                     root[2],
                     &[
                         ("↑↓/jk", "select"),
-                        ("1-6", "jump"),
+                        ("1-9", "jump"),
                         ("enter", "open"),
                         ("!", "shell"),
                         ("q", "quit"),
@@ -115,10 +115,11 @@ pub fn render(f: &mut Frame, app: &App) {
                 render_keybar(f, root[2], generic_keys(matches!(mode, StampMode::Menu(_))));
             }
             Screen::Sats(mode) => {
-                render_sats(f, root[1], mode);
+                render_sats(f, root[1], mode, app.sats_network);
                 let keys: &[(&str, &str)] = match mode {
                     SatsMode::Menu(_) => &[("↑↓/jk", "select"), ("enter", "open"), ("esc", "back")],
                     SatsMode::ConfirmSend { .. } => &[("y", "BROADCAST"), ("n", "abort")],
+                    SatsMode::InitSeed { .. } => &[("y", "create seed"), ("n", "cancel")],
                     _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
                 };
                 render_keybar(f, root[2], keys);
@@ -695,9 +696,25 @@ fn render_stamp(f: &mut Frame, area: Rect, mode: &StampMode) {
     }
 }
 
-fn render_sats(f: &mut Frame, area: Rect, mode: &SatsMode) {
+fn render_sats(f: &mut Frame, area: Rect, mode: &SatsMode, network: sats::Network) {
+    let title = if network == sats::Network::Bitcoin {
+        " ▞▞ SATS — MAINNET (real money) "
+    } else {
+        " ▞▞ SATS — signet (test coins) "
+    };
     match mode {
-        SatsMode::Menu(sel) => render_submenu(f, area, " ▞▞ SATS ", SATS_MENU, *sel),
+        SatsMode::Menu(sel) => render_submenu(f, area, title, SATS_MENU, *sel),
+        SatsMode::InitSeed { identity } => render_lines(
+            f,
+            area,
+            "no Bitcoin seed yet",
+            &[
+                format!("{identity} has no Bitcoin seed in the keystore."),
+                String::new(),
+                "y  create one now (saved to the encrypted keystore)".into(),
+                "n  cancel".into(),
+            ],
+        ),
         SatsMode::Address(form)
         | SatsMode::Balance(form)
         | SatsMode::History(form)
