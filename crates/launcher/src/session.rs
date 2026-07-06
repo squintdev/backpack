@@ -45,6 +45,21 @@ impl Session {
         Ok(())
     }
 
+    /// Change the keystore passphrase: verify `current`, re-seal the store
+    /// under `new`, and hold `new` for the rest of the session. The write is
+    /// atomic — a failure leaves the store sealed under the old passphrase.
+    pub fn rekey(&mut self, current: &str, new: &str) -> Result<()> {
+        if current != self.pass.as_str() {
+            return Err(anyhow!("current passphrase is wrong"));
+        }
+        if new.is_empty() {
+            return Err(anyhow!("new passphrase must not be empty"));
+        }
+        self.store.save(new.as_bytes())?;
+        self.pass = Zeroizing::new(new.to_string());
+        Ok(())
+    }
+
     pub fn identities(&self) -> Vec<PublicIdentity> {
         self.store.identities()
     }

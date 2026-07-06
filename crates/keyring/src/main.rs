@@ -67,6 +67,8 @@ enum Cmd {
     NostrInit { name: String },
     /// Add a Bitcoin seed to an identity created before Bitcoin support.
     BtcInit { name: String },
+    /// Change the keystore passphrase (re-seals the store file).
+    Passwd,
     /// Sign a file (or stdin) with an identity's signing key.
     Sign {
         #[arg(short, long)]
@@ -98,6 +100,7 @@ fn run() -> Result<()> {
         Cmd::Rm { name } => cmd_rm(&cli, name),
         Cmd::NostrInit { name } => cmd_nostr_init(&cli, name),
         Cmd::BtcInit { name } => cmd_btc_init(&cli, name),
+        Cmd::Passwd => cmd_passwd(&cli),
         Cmd::Sign { key, input } => cmd_sign(&cli, key, input.as_ref()),
         Cmd::Verify {
             pubfile,
@@ -184,6 +187,32 @@ fn cmd_btc_init(cli: &Cli, name: &str) -> Result<()> {
     } else {
         println!("{name} already has a Bitcoin seed");
     }
+    Ok(())
+}
+
+fn cmd_passwd(cli: &Cli) -> Result<()> {
+    let path = store_path(cli)?;
+    if !path.exists() {
+        bail!("no keystore at {}", path.display());
+    }
+    // Always prompt for the current passphrase — deliberately ignoring
+    // $BACKPACK_PASSPHRASE here, so a leaked env var can't silently rekey.
+    let current =
+        rpassword::prompt_password("Current passphrase: ").context("reading passphrase")?;
+    let store = KeyStore::open(&path, current.as_bytes())?;
+
+    let new1 = rpassword::prompt_password("New passphrase: ").context("reading passphrase")?;
+    if new1.is_empty() {
+        bail!("new passphrase must not be empty");
+    }
+    let new2 =
+        rpassword::prompt_password("Confirm new passphrase: ").context("reading passphrase")?;
+    if new1 != new2 {
+        bail!("new passphrases do not match");
+    }
+    store.save(new1.as_bytes())?;
+    println!("passphrase changed");
+    println!("note: any old backup copies of the keystore still open with the old passphrase");
     Ok(())
 }
 
