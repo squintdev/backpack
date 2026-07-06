@@ -33,7 +33,7 @@ backpack
 | SIGN/VERIFY | Sign a file with an identity (`<file>.sig`); verify anyone's signature from their `.pub` line. |
 | CANARY | NEW signs a fresh warrant canary (statement, validity window), RENEW re-signs an existing one (sequence+1, fresh window), CHECK verifies anyone's canary — signature, expiry, optional signer pinning and rollback detection. |
 | STAMP | STAMP submits a file's blinded hash to OpenTimestamps calendars (writes `<file>.ots`), UPGRADE fetches the Bitcoin attestation once anchored, VERIFY checks a file against its proof and Bitcoin, INFO shows a proof's attestations. |
-| SATS | ADDRESS (next unused receive address), BALANCE, HISTORY, SEND — a signed-but-unbroadcast transaction is shown in full (amount, fee, change, balance impact, warnings) and `y` broadcasts / `n` aborts. NETWORK toggles signet ↔ mainnet in-app (the panel title always names the active network); `BACKPACK_BTC_NETWORK` sets the startup default. An identity without a Bitcoin seed is offered one in-app (y/n) — no CLI needed. |
+| SATS | ADDRESS (next unused receive address), BALANCE, HISTORY, SEND (amount in sats, or `max` to sweep the whole balance) — a signed-but-unbroadcast transaction is shown in full (amount, fee, change, balance impact, warnings) and `y` broadcasts / `n` aborts. NETWORK toggles signet ↔ mainnet in-app (the panel title always names the active network); `BACKPACK_BTC_NETWORK` sets the startup default. An identity without a Bitcoin seed is offered one in-app (y/n) — no CLI needed. |
 
 The standalone CLIs (`veil`, `scrub`, `split`, `keyring`, `nostr`, `canary`, `stamp`, `sats`) remain for
 scripting and pipes — the launcher and the CLIs share the same libraries, so

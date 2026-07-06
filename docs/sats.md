@@ -34,6 +34,7 @@ sats address --identity alice           # next unused receive address
 sats balance --identity alice
 sats history --identity alice
 sats send --identity alice tb1q… 50000 --fee normal
+sats send --identity alice tb1q… max               # sweep: whole balance minus fee
 sats send --identity alice tb1q… 50000 --dry-run   # print the signed tx, send nothing
 sats export --identity alice --yes      # account xprv — full spend authority
 ```
@@ -63,10 +64,15 @@ The "check ends" line exists because clipboard-swapping malware is the most
 common way people lose coins — compare the first and last characters against
 the address you were given, out of band.
 
+`max` (or `all`) as the amount sweeps the wallet: every confirmed coin in,
+one output, no change — the confirmation panel says "MAX — empties the
+wallet" so there is no ambiguity about what is signed.
+
 Refused unless you pass `--force`:
 
 - fee above 5% of the amount
-- sending more than half your spendable balance
+- sending more than half your spendable balance (not applied to `max` —
+  emptying the wallet is the stated intent)
 - amounts below dust; addresses for the wrong network (never overridable)
 
 ## Trying it safely

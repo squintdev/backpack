@@ -390,7 +390,8 @@ pub enum Pending {
     SatsPrepare {
         identity: String,
         address: String,
-        sats: u64,
+        /// None = sweep the whole balance (the "max" amount).
+        sats: Option<u64>,
         fee: String,
     },
     SatsBroadcast {
@@ -1687,7 +1688,8 @@ impl App {
                                 vec![
                                     id_field,
                                     Field::new("to address"),
-                                    Field::new("amount (sats)"),
+                                    Field::new("amount (sats, or max)")
+                                        .with_placeholder("max empties the wallet"),
                                     Field::new("fee (fast/normal/slow or sat/vB)")
                                         .with_value("normal"),
                                 ],
@@ -1744,23 +1746,34 @@ impl App {
                 SatsMode::Send(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = SatsMode::Menu(3),
                     FormEvent::Editing => {}
-                    FormEvent::Submit => match form.value(2).replace([',', '_'], "").parse::<u64>()
-                    {
-                        Ok(sats) => {
-                            let identity = form.value(0).to_string();
-                            if has_seed(&identity) {
-                                queue = Some(Pending::SatsPrepare {
-                                    identity,
-                                    address: form.value(1).to_string(),
-                                    sats,
-                                    fee: form.value(3).to_string(),
-                                });
+                    FormEvent::Submit => {
+                        let raw = form.value(2).replace([',', '_'], "");
+                        let sats =
+                            if raw.eq_ignore_ascii_case("max") || raw.eq_ignore_ascii_case("all") {
+                                Some(None)
                             } else {
-                                *mode = SatsMode::InitSeed { identity };
+                                raw.parse::<u64>().ok().map(Some)
+                            };
+                        match sats {
+                            Some(sats) => {
+                                let identity = form.value(0).to_string();
+                                if has_seed(&identity) {
+                                    queue = Some(Pending::SatsPrepare {
+                                        identity,
+                                        address: form.value(1).to_string(),
+                                        sats,
+                                        fee: form.value(3).to_string(),
+                                    });
+                                } else {
+                                    *mode = SatsMode::InitSeed { identity };
+                                }
+                            }
+                            None => {
+                                form.error =
+                                    Some("amount must be a whole number of sats, or max".into())
                             }
                         }
-                        Err(_) => form.error = Some("amount must be a whole number of sats".into()),
-                    },
+                    }
                 },
                 SatsMode::ConfirmSend { tx_hex, .. } => match code {
                     KeyCode::Char('y') => {
@@ -3150,7 +3163,7 @@ fn sats_prepare(
     session: &Session,
     identity: &str,
     address: &str,
-    amount: u64,
+    amount: Option<u64>,
     fee: &str,
     network: sats::Network,
 ) -> Result<(Vec<String>, String)> {
@@ -3171,12 +3184,20 @@ fn sats_prepare(
             est.get(target).copied().unwrap_or(1.0).max(1.0)
         }
     };
-    let mut spend = sats::wallet::build_spend(&wallet, &s, address, amount, fee_rate)?;
+    let mut spend = match amount {
+        Some(a) => sats::wallet::build_spend(&wallet, &s, address, a, fee_rate)?,
+        None => sats::wallet::build_sweep(&wallet, &s, address, fee_rate)?,
+    };
 
-    let mut lines = vec![
-        format!("send     {}", sats::fmt_sats(spend.amount as i64)),
-        format!("to       {address}"),
-    ];
+    let amount_line = if amount.is_none() {
+        format!(
+            "send     {} (MAX — empties the wallet)",
+            sats::fmt_sats(spend.amount as i64)
+        )
+    } else {
+        format!("send     {}", sats::fmt_sats(spend.amount as i64))
+    };
+    let mut lines = vec![amount_line, format!("to       {address}")];
     if address.len() > 16 {
         lines.push(format!(
             "         check ends: {} … {}",
@@ -3198,13 +3219,13 @@ fn sats_prepare(
     lines.push(format!(
         "balance  {} -> {}",
         sats::fmt_sats(spend.spendable_before as i64),
-        sats::fmt_sats(spend.spendable_before as i64 - amount as i64 - spend.fee as i64)
+        sats::fmt_sats(spend.spendable_before as i64 - spend.amount as i64 - spend.fee as i64)
     ));
     lines.push(format!("network  {network:?}"));
     if spend.fee * 20 > spend.amount {
         lines.push("⚠ fee exceeds 5% of the amount".into());
     }
-    if spend.amount * 2 > spend.spendable_before {
+    if amount.is_some() && spend.amount * 2 > spend.spendable_before {
         lines.push("⚠ sending more than half your spendable balance".into());
     }
     let tx_hex = sats::wallet::sign_spend(&wallet, &s, &mut spend)?;
@@ -3427,6 +3448,27 @@ mod tests {
         assert!(
             matches!(app.pending, Some(Pending::SatsAddress { .. })),
             "seeded identity must queue, not prompt"
+        );
+        app.pending = None;
+
+        // "max" in the amount field queues a sweep (sats: None).
+        app.on_key(KeyCode::Esc); // leave form? we queued; screen is Address form still
+        if !matches!(app.screen, Screen::Sats(SatsMode::Menu(_))) {
+            app.on_key(KeyCode::Esc);
+        }
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Char('j'));
+        app.on_key(KeyCode::Enter); // SEND form
+        app.on_key(KeyCode::Enter); // identity prefilled
+        type_str(&mut app, "tb1qsomewhere");
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "MAX");
+        app.on_key(KeyCode::Enter); // -> fee
+        app.on_key(KeyCode::Enter); // submit
+        assert!(
+            matches!(app.pending, Some(Pending::SatsPrepare { sats: None, .. })),
+            "max must queue a sweep"
         );
         std::fs::remove_file(&store).ok();
     }
