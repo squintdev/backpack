@@ -1,0 +1,35 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - aarch64-unknown-linux-musl   # Raspberry Pi 3/4/5, 64-bit
+          - armv7-unknown-linux-musleabihf # Pi 2/Zero 2, 32-bit
+          - x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      # cross compiles inside a Docker image that carries the right C
+      # toolchain — needed for sats' libsecp256k1.
+      - run: cargo install cross --locked
+      - run: cross build --release --workspace --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../backpack-${{ github.ref_name }}-${{ matrix.target }}.tar.gz \
+            backpack veil scrub split keyring keyring-tui nostr canary stamp sats
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: backpack-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
