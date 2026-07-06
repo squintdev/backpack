@@ -64,6 +64,7 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
                 Pending::NostrPost { .. } => "publishing",
                 Pending::NostrFetch { .. } => "fetching",
                 Pending::NostrRelayTest { .. } => "testing relays",
+                Pending::NostrRebroadcast { .. } => "rebroadcasting history",
                 Pending::SatsAddress { .. }
                 | Pending::SatsBalance { .. }
                 | Pending::SatsHistory { .. } => "scanning the chain",
