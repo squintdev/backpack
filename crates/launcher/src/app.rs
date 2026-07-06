@@ -154,6 +154,9 @@ pub enum NostrMode {
         entries: Vec<SuggestEntry>,
         selected: usize,
         status: String,
+        /// Pubkeys followed from this screen — the ✓ badge is per-entry, and
+        /// rebuilt suggestion lists drop them even if relays lag.
+        followed: std::collections::HashSet<String>,
     },
     DmsWho(Form),
     SendDm(Form),
@@ -1115,13 +1118,20 @@ impl App {
                     identity,
                     entries,
                     selected,
+                    status,
                     ..
                 } => match code {
                     KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(5),
                     KeyCode::Char('j') | KeyCode::Down if *selected + 1 < entries.len() => {
-                        *selected += 1
+                        *selected += 1;
+                        // The status line describes the LAST action; leaving it
+                        // up while browsing made every entry look followed.
+                        status.clear();
                     }
-                    KeyCode::Char('k') | KeyCode::Up => *selected = selected.saturating_sub(1),
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        *selected = selected.saturating_sub(1);
+                        status.clear();
+                    }
                     KeyCode::Char('c') => {
                         if let Some(e) = entries.get(*selected) {
                             queue_copy = Some(e.npub.clone());
@@ -2120,6 +2130,7 @@ impl App {
                             entries,
                             selected: 0,
                             status: String::new(),
+                            followed: Default::default(),
                         },
                         Err(e) => NostrMode::Results {
                             title: "explore".into(),
@@ -2134,19 +2145,35 @@ impl App {
                 identity,
                 author_hex,
             } => {
-                let followed = nostr_follow(session, &identity, &author_hex, None);
+                let follow_result = nostr_follow(session, &identity, &author_hex, None);
                 let rebuilt = nostr_suggestions(session, &identity);
                 if let Screen::Nostr(mode) = &mut self.screen {
+                    // Carry the followed-set across rebuilds so ✓ badges stay
+                    // accurate and relay lag can't resurface followed people.
+                    let mut followed = match mode {
+                        NostrMode::Explore { followed, .. } => std::mem::take(followed),
+                        _ => Default::default(),
+                    };
+                    if follow_result.is_ok() {
+                        followed.insert(author_hex.clone());
+                    }
                     *mode = match rebuilt {
-                        Ok(entries) => NostrMode::Explore {
-                            identity,
-                            entries,
-                            selected: 0,
-                            status: match followed {
-                                Ok(_) => "followed ✓".to_string(),
-                                Err(e) => format!("follow failed: {e}"),
-                            },
-                        },
+                        Ok(entries) => {
+                            let entries: Vec<SuggestEntry> = entries
+                                .into_iter()
+                                .filter(|e| !followed.contains(&e.hex))
+                                .collect();
+                            NostrMode::Explore {
+                                identity,
+                                entries,
+                                selected: 0,
+                                status: match follow_result {
+                                    Ok(_) => "followed ✓".to_string(),
+                                    Err(e) => format!("follow failed: {e}"),
+                                },
+                                followed,
+                            }
+                        }
                         Err(e) => NostrMode::Results {
                             title: "explore".into(),
                             lines: vec![format!("failed: {e}")],
@@ -4436,10 +4463,17 @@ mod tests {
             identity: "kim".into(),
             entries: vec![entry.clone(), entry],
             selected: 0,
-            status: String::new(),
+            status: "followed ✓".into(),
+            followed: Default::default(),
         });
         app.on_key(KeyCode::Char('j'));
-        if let Screen::Nostr(NostrMode::Explore { selected, .. }) = &app.screen {
+        if let Screen::Nostr(NostrMode::Explore {
+            selected, status, ..
+        }) = &app.screen
+        {
+            // Moving the selection clears the last-action status — it must
+            // not read as a per-entry "followed" badge.
+            assert!(status.is_empty(), "status must clear on selection move");
             assert_eq!(*selected, 1);
         } else {
             panic!("expected explore");
