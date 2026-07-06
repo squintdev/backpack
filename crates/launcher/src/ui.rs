@@ -181,6 +181,13 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
             ("esc", "back"),
         ],
         NostrMode::Signer => &[("c", "copy bunker url"), ("esc", "stop & back")],
+        NostrMode::Relays { .. } => &[
+            ("j/k", "select"),
+            ("a", "add"),
+            ("d", "remove"),
+            ("t", "test all"),
+            ("esc", "back"),
+        ],
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
     }
 }
@@ -430,7 +437,38 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::FollowsForm(form)
         | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
         NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
-        NostrMode::SignerWho(form) => render_form_page(f, area, form),
+        NostrMode::SignerWho(form) | NostrMode::RelayAdd(form) => render_form_page(f, area, form),
+        NostrMode::Relays {
+            relays,
+            selected,
+            status,
+        } => {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(4), Constraint::Length(6)])
+                .split(area);
+            let items: Vec<ListItem> = relays
+                .iter()
+                .map(|r| ListItem::new(Line::from(Span::styled(r.clone(), accent()))))
+                .collect();
+            let list = List::default()
+                .items(items)
+                .block(titled_block(
+                    " ▞▞ RELAYS — used by post, timeline, DMs, signer ",
+                ))
+                .highlight_style(selected_style())
+                .highlight_symbol("▶");
+            let mut state = ListState::default();
+            state.select(Some(*selected));
+            f.render_stateful_widget(list, rows[0], &mut state);
+            f.render_widget(
+                Paragraph::new(status.as_str())
+                    .style(dim())
+                    .wrap(Wrap { trim: false })
+                    .block(titled_block(" status ")),
+                rows[1],
+            );
+        }
         NostrMode::Signer => {} // rendered from app.signer in render()
         NostrMode::ExploreWho(form) => render_form_page(f, area, form),
         NostrMode::Explore {

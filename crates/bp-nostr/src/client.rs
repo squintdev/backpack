@@ -22,13 +22,53 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.damus.io",
     "wss://nos.lol",
-    "wss://relay.nostr.band",
+    "wss://relay.primal.net",
 ];
 
 /// Comma-separated relay list override environment variable.
 pub const RELAY_ENV: &str = "BACKPACK_NOSTR_RELAYS";
 
-/// Resolve the relay list: explicit list > `$BACKPACK_NOSTR_RELAYS` > defaults.
+/// Path of the persisted relay list: `~/.config/backpack/relays.txt`
+/// (or `$BACKPACK_RELAYS_FILE`). One `wss://…` URL per line; `#` comments.
+pub fn relays_file_path() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("BACKPACK_RELAYS_FILE") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    directories::ProjectDirs::from("", "", "backpack").map(|d| d.config_dir().join("relays.txt"))
+}
+
+/// Relays saved by the RELAYS screen / hand-edited file, if any.
+pub fn saved_relays() -> Vec<String> {
+    let Some(path) = relays_file_path() else {
+        return Vec::new();
+    };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("wss://") || l.starts_with("ws://"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Persist the relay list for future sessions.
+pub fn save_relays(relays: &[String]) -> std::io::Result<()> {
+    let path = relays_file_path()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = String::from("# backpack relay list — one wss:// URL per line\n");
+    for r in relays {
+        text.push_str(r);
+        text.push('\n');
+    }
+    std::fs::write(path, text)
+}
+
+/// Resolve the relay list: explicit list > `$BACKPACK_NOSTR_RELAYS` >
+/// saved relays file > defaults.
 pub fn resolve_relays(explicit: &[String]) -> Vec<String> {
     if !explicit.is_empty() {
         return explicit.to_vec();
@@ -43,6 +83,10 @@ pub fn resolve_relays(explicit: &[String]) -> Vec<String> {
         if !list.is_empty() {
             return list;
         }
+    }
+    let saved = saved_relays();
+    if !saved.is_empty() {
+        return saved;
     }
     DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect()
 }
@@ -879,6 +923,42 @@ fn short_pk(hex: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn relays_file_roundtrip_and_precedence() {
+        let path = std::env::temp_dir().join(format!(
+            "relays-test-{}-{:?}.txt",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::env::set_var("BACKPACK_RELAYS_FILE", &path);
+        std::env::remove_var(RELAY_ENV);
+
+        // No file -> compiled defaults.
+        std::fs::remove_file(&path).ok();
+        assert_eq!(resolve_relays(&[]), DEFAULT_RELAYS.to_vec());
+
+        // Saved list wins over defaults; junk lines are ignored.
+        let list = vec![
+            "wss://relay.ditto.pub".to_string(),
+            "wss://nostr.land".to_string(),
+        ];
+        save_relays(&list).unwrap();
+        assert_eq!(saved_relays(), list);
+        assert_eq!(resolve_relays(&[]), list);
+        std::fs::write(&path, "# comment\nnot-a-relay\nwss://ok.example\n").unwrap();
+        assert_eq!(saved_relays(), vec!["wss://ok.example".to_string()]);
+
+        // Env var beats the file; explicit beats everything.
+        std::env::set_var(RELAY_ENV, "wss://env.example");
+        assert_eq!(resolve_relays(&[]), vec!["wss://env.example".to_string()]);
+        let explicit = vec!["wss://explicit.example".to_string()];
+        assert_eq!(resolve_relays(&explicit), explicit);
+
+        std::env::remove_var(RELAY_ENV);
+        std::env::remove_var("BACKPACK_RELAYS_FILE");
+        std::fs::remove_file(&path).ok();
+    }
     use super::*;
 
     #[test]

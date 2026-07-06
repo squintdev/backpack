@@ -63,6 +63,7 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> Result<
             let label = match &op {
                 Pending::NostrPost { .. } => "publishing",
                 Pending::NostrFetch { .. } => "fetching",
+                Pending::NostrRelayTest { .. } => "testing relays",
                 Pending::SatsAddress { .. }
                 | Pending::SatsBalance { .. }
                 | Pending::SatsHistory { .. } => "scanning the chain",
