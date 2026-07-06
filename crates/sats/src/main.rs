@@ -18,7 +18,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
 use keyring::{default_keystore_path, KeyStore, PATH_ENV};
 use sats::hd::{Chain, Wallet};
-use sats::wallet::{build_spend, history, scan, sign_spend};
+use sats::wallet::{build_spend, build_sweep, history, scan, sign_spend};
 use sats::{default_esplora, fmt_sats, parse_network, Network};
 use zeroize::Zeroizing;
 
@@ -80,8 +80,8 @@ enum Cmd {
         identity: String,
         /// Destination address.
         address: String,
-        /// Amount in sats.
-        sats: u64,
+        /// Amount in sats, or "max" to sweep the whole balance minus fee.
+        sats: String,
         /// Fee target: fast (~1 block), normal (~6), slow (~144), or a
         /// number in sat/vB.
         #[arg(long, default_value = "normal")]
@@ -169,7 +169,7 @@ fn run() -> Result<()> {
             force,
             dry_run,
         } => cmd_send(
-            &cli, &client, network, identity, address, *amount, fee, *force, *dry_run,
+            &cli, &client, network, identity, address, amount, fee, *force, *dry_run,
         ),
         Cmd::Export { identity, yes } => {
             if !yes {
@@ -190,7 +190,7 @@ fn cmd_send(
     network: Network,
     identity: &str,
     address: &str,
-    amount: u64,
+    amount: &str,
     fee: &str,
     force: bool,
     dry_run: bool,
@@ -198,9 +198,19 @@ fn cmd_send(
     let wallet = load_wallet(cli, identity, network)?;
     let s = scan(&wallet, client)?;
     let fee_rate = resolve_fee_rate(client, fee)?;
-    let mut spend = build_spend(&wallet, &s, address, amount, fee_rate)?;
+    let sweep = amount.eq_ignore_ascii_case("max") || amount.eq_ignore_ascii_case("all");
+    let mut spend = if sweep {
+        build_sweep(&wallet, &s, address, fee_rate)?
+    } else {
+        let amount: u64 = amount
+            .replace([',', '_'], "")
+            .parse()
+            .map_err(|_| anyhow!("amount must be a whole number of sats, or \"max\""))?;
+        build_spend(&wallet, &s, address, amount, fee_rate)?
+    };
 
-    // Foot-gun refusals — overridable, never silent.
+    // Foot-gun refusals — overridable, never silent. A sweep empties the
+    // wallet by definition, so the half-balance guard does not apply.
     if !force {
         if spend.fee * 20 > spend.amount {
             bail!(
@@ -208,7 +218,7 @@ fn cmd_send(
                 fmt_sats(spend.fee as i64)
             );
         }
-        if spend.amount * 2 > spend.spendable_before {
+        if !sweep && spend.amount * 2 > spend.spendable_before {
             bail!(
                 "sending more than half your spendable balance ({}) — use --force if intentional",
                 fmt_sats(spend.spendable_before as i64)
@@ -219,7 +229,14 @@ fn cmd_send(
     // The confirmation screen: everything, then typed consent.
     let d = &spend.destination;
     eprintln!("─────────────────────────────────────────────");
-    eprintln!("send      {}", fmt_sats(spend.amount as i64));
+    if sweep {
+        eprintln!(
+            "send      {} (MAX — empties the wallet)",
+            fmt_sats(spend.amount as i64)
+        );
+    } else {
+        eprintln!("send      {}", fmt_sats(spend.amount as i64));
+    }
     eprintln!("to        {d}");
     if d.len() > 16 {
         eprintln!("          check ends: {} … {}", &d[..8], &d[d.len() - 8..]);

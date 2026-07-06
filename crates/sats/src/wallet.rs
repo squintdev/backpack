@@ -286,6 +286,67 @@ pub fn build_spend(
     })
 }
 
+/// Build a sweep: every confirmed coin in, one output carrying everything
+/// minus the fee, no change. `spend.amount` is what the destination gets.
+pub fn build_sweep(wallet: &Wallet, scan: &Scan, dest: &str, fee_rate: f64) -> Result<Spend> {
+    let address = Address::from_str(dest)
+        .map_err(|e| Error::Refused(format!("bad address: {e}")))?
+        .require_network(wallet.network)
+        .map_err(|_| {
+            Error::Refused(format!(
+                "address is not a {:?} address — wrong network",
+                wallet.network
+            ))
+        })?;
+
+    let selected: Vec<usize> = (0..scan.utxos.len())
+        .filter(|&i| scan.utxos[i].confirmed)
+        .collect();
+    if selected.is_empty() {
+        return Err(Error::Refused("no confirmed coins to sweep".into()));
+    }
+    let in_value: u64 = selected.iter().map(|&i| scan.utxos[i].value).sum();
+    let vbytes = estimate_vbytes(selected.len(), 1);
+    let fee = (vbytes as f64 * fee_rate).ceil() as u64;
+    let amount = in_value
+        .checked_sub(fee)
+        .filter(|&a| a >= DUST_SATS)
+        .ok_or_else(|| {
+            Error::Refused(format!(
+                "balance ({in_value} sats) does not cover the fee ({fee} sats) plus dust"
+            ))
+        })?;
+
+    let tx = Transaction {
+        version: Version::TWO,
+        lock_time: LockTime::ZERO,
+        input: selected
+            .iter()
+            .map(|&i| TxIn {
+                previous_output: scan.utxos[i].outpoint,
+                script_sig: Default::default(),
+                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: Witness::new(),
+            })
+            .collect(),
+        output: vec![TxOut {
+            value: Amount::from_sat(amount),
+            script_pubkey: address.script_pubkey(),
+        }],
+    };
+    Ok(Spend {
+        tx,
+        selected,
+        destination: dest.to_string(),
+        amount,
+        fee,
+        fee_rate: fee as f64 / vbytes as f64,
+        change: 0,
+        change_address: None,
+        spendable_before: in_value,
+    })
+}
+
 /// Sign every input of a built spend. Consumes the spend, returns raw tx hex.
 pub fn sign_spend(wallet: &Wallet, scan: &Scan, spend: &mut Spend) -> Result<String> {
     let secp = Secp256k1::new();
@@ -438,6 +499,40 @@ mod tests {
         let vsize = parsed.vsize() as u64;
         let implied = spend.fee as f64 / vsize as f64;
         assert!(implied >= 1.0, "must not underpay: {implied} sat/vB");
+    }
+
+    #[test]
+    fn sweep_empties_the_wallet_exactly() {
+        let wallet = w();
+        let scan = fake_scan(&wallet, &[50_000, 30_000, 700]);
+        let mut spend = build_sweep(&wallet, &scan, &dest(&wallet), 2.0).unwrap();
+        assert_eq!(spend.selected.len(), 3); // every confirmed coin
+        assert_eq!(spend.change, 0);
+        assert!(spend.change_address.is_none());
+        assert_eq!(spend.tx.output.len(), 1);
+        // Exact conservation: inputs = amount + fee, nothing left behind.
+        assert_eq!(80_700, spend.amount + spend.fee);
+
+        let hex = sign_spend(&wallet, &scan, &mut spend).unwrap();
+        let parsed: Transaction =
+            bitcoin::consensus::deserialize(&hex::decode(&hex).unwrap()).unwrap();
+        assert_eq!(parsed.input.len(), 3);
+        assert_eq!(parsed.output.len(), 1);
+        let implied = spend.fee as f64 / parsed.vsize() as f64;
+        assert!(implied >= 2.0, "sweep must not underpay: {implied} sat/vB");
+    }
+
+    #[test]
+    fn sweep_refuses_when_fee_eats_everything() {
+        let wallet = w();
+        let scan = fake_scan(&wallet, &[600]);
+        assert!(matches!(
+            build_sweep(&wallet, &scan, &dest(&wallet), 10.0),
+            Err(Error::Refused(_))
+        ));
+        // And with no confirmed coins at all.
+        let empty = fake_scan(&wallet, &[]);
+        assert!(build_sweep(&wallet, &empty, &dest(&wallet), 1.0).is_err());
     }
 
     #[test]
