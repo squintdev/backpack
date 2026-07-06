@@ -124,6 +124,12 @@ pub struct IdentitiesState {
 
 pub enum NostrMode {
     Menu(usize),
+    Relays {
+        relays: Vec<String>,
+        selected: usize,
+        status: String,
+    },
+    RelayAdd(Form),
     Whoami(Form),
     Post(Form),
     ConfirmPost {
@@ -203,6 +209,7 @@ pub const NOSTR_MENU: &[&str] = &[
     "PROFILE   view / edit my profile",
     "WHOAMI    show my npub",
     "SIGNER    be a bunker (NIP-46)",
+    "RELAYS    manage my relay list",
 ];
 
 pub enum VeilMode {
@@ -379,6 +386,9 @@ pub enum Pending {
     },
     NostrSignerStart {
         identity: String,
+    },
+    NostrRelayTest {
+        relays: Vec<String>,
     },
     SatsAddress {
         identity: String,
@@ -879,6 +889,18 @@ impl App {
                                 "be a signer (bunker)",
                                 vec![Field::new("identity").with_value(&first)],
                             )),
+                            11 => NostrMode::Relays {
+                                relays: bp_nostr::client::resolve_relays(&[]),
+                                selected: 0,
+                                status: if std::env::var(bp_nostr::client::RELAY_ENV).is_ok() {
+                                    format!(
+                                        "note: ${} is set and overrides the saved list",
+                                        bp_nostr::client::RELAY_ENV
+                                    )
+                                } else {
+                                    String::new()
+                                },
+                            },
                             _ => NostrMode::Whoami(Form::new(
                                 "whoami",
                                 vec![Field::new("identity").with_value(&first)],
@@ -886,6 +908,75 @@ impl App {
                         };
                     }
                     _ => {}
+                },
+                NostrMode::Relays {
+                    relays,
+                    selected,
+                    status,
+                } => match code {
+                    KeyCode::Esc | KeyCode::Char('q') => *mode = NostrMode::Menu(11),
+                    KeyCode::Char('j') | KeyCode::Down
+                        if !relays.is_empty() && *selected + 1 < relays.len() =>
+                    {
+                        *selected += 1;
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => *selected = selected.saturating_sub(1),
+                    KeyCode::Char('a') => {
+                        *mode = NostrMode::RelayAdd(Form::new(
+                            "add a relay",
+                            vec![Field::new("relay url").with_placeholder("wss://relay.example")],
+                        ));
+                    }
+                    KeyCode::Char('d') if !relays.is_empty() => {
+                        if relays.len() == 1 {
+                            *status = "keep at least one relay".into();
+                        } else {
+                            let gone = relays.remove(*selected);
+                            *selected = (*selected).min(relays.len() - 1);
+                            *status = match bp_nostr::client::save_relays(relays) {
+                                Ok(()) => format!("removed {gone} — saved"),
+                                Err(e) => format!("save failed: {e}"),
+                            };
+                        }
+                    }
+                    KeyCode::Char('t') => {
+                        queue = Some(Pending::NostrRelayTest {
+                            relays: relays.clone(),
+                        });
+                    }
+                    _ => {}
+                },
+                NostrMode::RelayAdd(form) => match form.on_key(code) {
+                    FormEvent::Cancel => {
+                        *mode = NostrMode::Relays {
+                            relays: bp_nostr::client::resolve_relays(&[]),
+                            selected: 0,
+                            status: String::new(),
+                        }
+                    }
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let url = form.value(0).trim().to_string();
+                        if !(url.starts_with("wss://") || url.starts_with("ws://")) {
+                            form.error = Some("must start with wss:// (or ws://)".into());
+                        } else {
+                            let mut relays = bp_nostr::client::resolve_relays(&[]);
+                            let status = if relays.contains(&url) {
+                                "already in the list".to_string()
+                            } else {
+                                relays.push(url.clone());
+                                match bp_nostr::client::save_relays(&relays) {
+                                    Ok(()) => format!("added {url} — saved"),
+                                    Err(e) => format!("save failed: {e}"),
+                                }
+                            };
+                            *mode = NostrMode::Relays {
+                                selected: relays.len().saturating_sub(1),
+                                relays,
+                                status,
+                            };
+                        }
+                    }
                 },
                 NostrMode::Whoami(form) => match form.on_key(code) {
                     FormEvent::Cancel => *mode = NostrMode::Menu(0),
@@ -2046,6 +2137,12 @@ impl App {
                     };
                 }
             }
+            Pending::NostrRelayTest { relays } => {
+                let results = test_relays(&relays);
+                if let Screen::Nostr(NostrMode::Relays { status, .. }) = &mut self.screen {
+                    *status = results;
+                }
+            }
             Pending::NostrSignerStart { identity } => match start_signer(session, &identity) {
                 Ok(state) => {
                     self.signer = Some(state);
@@ -2427,6 +2524,37 @@ fn nostr_unfollow(session: &Session, identity: &str, author_hex: &str) -> Result
     let relays = bp_nostr::client::resolve_relays(&[]);
     bp_nostr::client::unfollow(&relays, &sk, author_hex).map_err(|e| anyhow!(e))?;
     Ok(())
+}
+
+/// Probe each relay with a tiny real subscription; a relay that answers
+/// (even with zero events) is alive.
+fn test_relays(relays: &[String]) -> String {
+    let probe = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6"; // fiatjaf
+    let hex = match bp_nostr::nip19::pubkey_to_hex(probe) {
+        Ok(h) => h,
+        Err(_) => return "internal probe error".into(),
+    };
+    let filter = bp_nostr::relay::Filter {
+        authors: Some(vec![hex]),
+        kinds: Some(vec![1]),
+        p_tags: None,
+        since: None,
+        limit: Some(1),
+    };
+    let results: Vec<String> = std::thread::scope(|scope| {
+        let handles: Vec<_> = relays
+            .iter()
+            .map(|r| {
+                let filter = &filter;
+                scope.spawn(move || match bp_nostr::client::fetch_from(r, filter) {
+                    Ok(_) => format!("OK    {r}"),
+                    Err(e) => format!("FAIL  {r}: {e}"),
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    results.join("\n")
 }
 
 fn start_signer(session: &Session, identity: &str) -> Result<SignerState> {
@@ -3610,6 +3738,57 @@ mod tests {
     }
 
     #[test]
+    fn relays_screen_add_remove_persists() {
+        let _guard = env_lock();
+        let store = fresh_store_env();
+        let file = std::env::temp_dir().join(format!("relays-tui-{}.txt", std::process::id()));
+        std::fs::remove_file(&file).ok();
+        std::env::set_var("BACKPACK_RELAYS_FILE", &file);
+        std::env::remove_var(bp_nostr::client::RELAY_ENV);
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Char('2'));
+        app.on_key(KeyCode::Enter); // NOSTR menu
+        app.on_key(KeyCode::Up); // wrap to RELAYS
+        app.on_key(KeyCode::Enter);
+        assert!(matches!(
+            app.screen,
+            Screen::Nostr(NostrMode::Relays { .. })
+        ));
+
+        // Add a relay; list persists to the file.
+        app.on_key(KeyCode::Char('a'));
+        type_str(&mut app, "wss://my.relay.example");
+        app.on_key(KeyCode::Enter);
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(saved.contains("wss://my.relay.example"), "{saved}");
+        // Defaults were captured into the saved list too.
+        assert!(saved.contains("wss://relay.primal.net"), "{saved}");
+
+        // Bad URL rejected in-form.
+        app.on_key(KeyCode::Char('a'));
+        type_str(&mut app, "http://nope");
+        app.on_key(KeyCode::Enter);
+        match &app.screen {
+            Screen::Nostr(NostrMode::RelayAdd(f)) => assert!(f.error.is_some()),
+            _ => panic!("bad relay url must stay on the form"),
+        }
+        app.on_key(KeyCode::Esc);
+
+        // Remove the selected relay (selection landed on the new one).
+        if let Screen::Nostr(NostrMode::Relays { selected, .. }) = &mut app.screen {
+            *selected = 0;
+        }
+        app.on_key(KeyCode::Char('d'));
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(!saved.contains("wss://relay.damus.io"), "{saved}");
+
+        std::env::remove_var("BACKPACK_RELAYS_FILE");
+        std::fs::remove_file(&file).ok();
+        std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
     fn passphrase_change_flow() {
         let _guard = env_lock();
         let path = fresh_store_env();
@@ -3992,7 +4171,8 @@ mod tests {
         // c on the WHOAMI results stages the same npub.
         app.on_key(KeyCode::Char('2'));
         app.on_key(KeyCode::Enter); // NOSTR menu
-        app.on_key(KeyCode::Up); // wrap to last entry (SIGNER)
+        app.on_key(KeyCode::Up); // wrap to last entry (RELAYS)
+        app.on_key(KeyCode::Up); // -> SIGNER
         app.on_key(KeyCode::Up); // -> WHOAMI
         app.on_key(KeyCode::Enter); // WHOAMI form (identity prefilled)
         app.on_key(KeyCode::Enter); // submit
