@@ -255,6 +255,13 @@ fn cmd_send(
         fmt_sats(spend.spendable_before as i64 - spend.amount as i64 - spend.fee as i64)
     );
     eprintln!("network   {network:?}");
+    if sweep {
+        eprintln!();
+        eprintln!("⚠ PRIVACY: a sweep spends ALL your coins in one transaction,");
+        eprintln!("  publicly linking every address that ever received to this");
+        eprintln!("  wallet. Anyone watching the destination sees your full");
+        eprintln!("  payment history as one cluster.");
+    }
     eprintln!("─────────────────────────────────────────────");
 
     if !dry_run {

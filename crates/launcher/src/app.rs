@@ -3228,6 +3228,13 @@ fn sats_prepare(
     if amount.is_some() && spend.amount * 2 > spend.spendable_before {
         lines.push("⚠ sending more than half your spendable balance".into());
     }
+    if amount.is_none() {
+        lines.push(String::new());
+        lines.push("⚠ PRIVACY: a sweep spends ALL your coins in one transaction,".into());
+        lines.push("  publicly linking every address that ever received to this".into());
+        lines.push("  wallet. Anyone watching the destination sees your full".into());
+        lines.push("  payment history as one cluster.".into());
+    }
     let tx_hex = sats::wallet::sign_spend(&wallet, &s, &mut spend)?;
     Ok((lines, tx_hex))
 }
