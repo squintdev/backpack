@@ -66,7 +66,9 @@ the address you were given, out of band.
 
 `max` (or `all`) as the amount sweeps the wallet: every confirmed coin in,
 one output, no change — the confirmation panel says "MAX — empties the
-wallet" so there is no ambiguity about what is signed.
+wallet" so there is no ambiguity about what is signed, and carries a privacy
+warning: spending every coin at once publicly links all your receive
+addresses into one cluster for anyone watching the destination.
 
 Refused unless you pass `--force`:
 
