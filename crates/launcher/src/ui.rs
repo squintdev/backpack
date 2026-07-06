@@ -73,6 +73,7 @@ pub fn render(f: &mut Frame, app: &App) {
                         ("c", "copy npub"),
                         ("n", "nostr key"),
                         ("x", "reveal nsec"),
+                        ("p", "passphrase"),
                         ("d", "delete"),
                         ("esc", "back"),
                     ],
@@ -341,7 +342,7 @@ fn render_identities(
     );
 
     match &st.mode {
-        IdMode::New(form) => render_popup_form(f, form),
+        IdMode::New(form) | IdMode::Passwd(form) => render_popup_form(f, form),
         IdMode::ConfirmDelete => {
             let name = ids
                 .get(st.selected)

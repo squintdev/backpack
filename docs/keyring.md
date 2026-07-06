@@ -27,6 +27,7 @@ keyring list
 keyring export alice > alice.pub
 keyring sign --key alice msg.txt > msg.sig
 keyring verify alice.pub msg.txt msg.sig
+keyring passwd                            # change the keystore passphrase
 ```
 
 ## Keystore
@@ -105,3 +106,15 @@ SHA-256(ed25519 pubkey), grouped as `xxxx-xxxx-xxxx-xxxx`.
 ## See also
 
 [bp-core](bp-core.md) · [veil](veil.md) · [workflows](workflows.md)
+
+## Changing the passphrase
+
+`keyring passwd` (or `p` on the launcher's IDENTITIES screen) re-seals the
+store under a new passphrase: it verifies the current one first — the
+`BACKPACK_PASSPHRASE` env var is deliberately ignored here — prompts for the
+new one twice, and writes atomically, so a failure leaves the old sealing
+intact. The keys inside are unchanged (same identities, npub, addresses).
+
+Old **backup copies** of the keystore still open with the old passphrase —
+if you rotated because the old one leaked, destroy or re-create old backups
+too, then make a fresh one.

@@ -110,6 +110,8 @@ pub enum IdMode {
     Reveal {
         nsec: String,
     },
+    /// Changing the keystore passphrase (current, new, confirm — all masked).
+    Passwd(Form),
 }
 
 pub struct IdentitiesState {
@@ -659,6 +661,16 @@ impl App {
                     KeyCode::Char('x') if !session.identities().is_empty() => {
                         st.mode = IdMode::RevealConfirm;
                     }
+                    KeyCode::Char('p') => {
+                        st.mode = IdMode::Passwd(Form::new(
+                            "change keystore passphrase",
+                            vec![
+                                Field::masked("current passphrase"),
+                                Field::masked("new passphrase"),
+                                Field::masked("confirm new passphrase"),
+                            ],
+                        ));
+                    }
                     _ => {}
                 },
                 IdMode::New(form) => match form.on_key(code) {
@@ -677,6 +689,28 @@ impl App {
                                 st.mode = IdMode::List;
                             }
                             Err(e) => form.error = Some(format!("{e}")),
+                        }
+                    }
+                },
+                IdMode::Passwd(form) => match form.on_key(code) {
+                    FormEvent::Cancel => st.mode = IdMode::List,
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        let (current, new, confirm) = (form.value(0), form.value(1), form.value(2));
+                        if new != confirm {
+                            form.error = Some("new passphrases do not match".into());
+                        } else {
+                            let current = current.to_string();
+                            let new = new.to_string();
+                            match session.rekey(&current, &new) {
+                                Ok(()) => {
+                                    st.status = "passphrase changed — old backups still open \
+                                                 with the old one; make a fresh backup"
+                                        .to_string();
+                                    st.mode = IdMode::List;
+                                }
+                                Err(e) => form.error = Some(format!("{e}")),
+                            }
                         }
                     }
                 },
@@ -3395,6 +3429,81 @@ mod tests {
             "seeded identity must queue, not prompt"
         );
         std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn passphrase_change_flow() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        {
+            let mut app = unlocked_app(); // creates the store with "pw"
+            app.on_key(KeyCode::Enter); // IDENTITIES
+            app.on_key(KeyCode::Char('g'));
+            type_str(&mut app, "alice");
+            app.on_key(KeyCode::Enter);
+
+            // Wrong current passphrase is rejected in-form.
+            app.on_key(KeyCode::Char('p'));
+            type_str(&mut app, "wrong");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "new-pass");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "new-pass");
+            app.on_key(KeyCode::Enter);
+            match &app.screen {
+                Screen::Identities(st) => match &st.mode {
+                    IdMode::Passwd(f) => assert!(f.error.is_some()),
+                    _ => panic!("wrong current pass must stay on the form"),
+                },
+                _ => panic!("wrong screen"),
+            }
+            app.on_key(KeyCode::Esc);
+
+            // Mismatched new passphrases are rejected.
+            app.on_key(KeyCode::Char('p'));
+            type_str(&mut app, "pw");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "one");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "two");
+            app.on_key(KeyCode::Enter);
+            match &app.screen {
+                Screen::Identities(st) => {
+                    assert!(matches!(&st.mode, IdMode::Passwd(f) if f.error.is_some()))
+                }
+                _ => panic!("wrong screen"),
+            }
+            app.on_key(KeyCode::Esc);
+
+            // Correct change succeeds…
+            app.on_key(KeyCode::Char('p'));
+            type_str(&mut app, "pw");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "new-pass");
+            app.on_key(KeyCode::Enter);
+            type_str(&mut app, "new-pass");
+            app.on_key(KeyCode::Enter);
+            match &app.screen {
+                Screen::Identities(st) => {
+                    assert!(matches!(st.mode, IdMode::List));
+                    assert!(st.status.contains("passphrase changed"), "{}", st.status);
+                }
+                _ => panic!("wrong screen"),
+            }
+
+            // …and later mutations re-seal under the NEW passphrase.
+            app.on_key(KeyCode::Char('g'));
+            type_str(&mut app, "bob");
+            app.on_key(KeyCode::Enter);
+        }
+
+        // Old passphrase no longer opens the store; new one does, with both
+        // identities intact.
+        assert!(keyring::KeyStore::open(&path, b"pw").is_err());
+        let store = keyring::KeyStore::open(&path, b"new-pass").unwrap();
+        let names: Vec<String> = store.identities().into_iter().map(|i| i.name).collect();
+        assert_eq!(names, vec!["alice".to_string(), "bob".to_string()]);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]
