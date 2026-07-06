@@ -73,6 +73,7 @@ pub fn render(f: &mut Frame, app: &App) {
                         ("c", "copy npub"),
                         ("n", "nostr key"),
                         ("x", "reveal nsec"),
+                        ("u", "copy to usb"),
                         ("p", "passphrase"),
                         ("d", "delete"),
                         ("esc", "back"),
@@ -216,6 +217,25 @@ fn render_gate(f: &mut Frame, area: Rect, form: &Form) {
         height: h,
     };
     render_form(f, rect, form);
+
+    // Always show WHICH keystore is being unlocked — a deck user must be able
+    // to tell local storage from a plugged-in USB at a glance.
+    if let Ok(path) = Session::keystore_path() {
+        let label = format!("keystore: {}", path.display());
+        let y = rect.y + rect.height;
+        if y < area.y + area.height {
+            let line = Rect {
+                x: area.x + 1,
+                y,
+                width: area.width.saturating_sub(2),
+                height: 1,
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(label, dim()))).alignment(Alignment::Center),
+                line,
+            );
+        }
+    }
 }
 
 fn render_home(f: &mut Frame, area: Rect, selected: usize, session: &Session) {
@@ -342,7 +362,9 @@ fn render_identities(
     );
 
     match &st.mode {
-        IdMode::New(form) | IdMode::Passwd(form) => render_popup_form(f, form),
+        IdMode::New(form) | IdMode::Passwd(form) | IdMode::Transfer(form) => {
+            render_popup_form(f, form)
+        }
         IdMode::ConfirmDelete => {
             let name = ids
                 .get(st.selected)

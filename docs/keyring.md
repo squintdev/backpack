@@ -28,6 +28,7 @@ keyring export alice > alice.pub
 keyring sign --key alice msg.txt > msg.sig
 keyring verify alice.pub msg.txt msg.sig
 keyring passwd                            # change the keystore passphrase
+keyring transfer alice --to /media/usb/keyring.veil  # copy identity to a USB keystore
 ```
 
 ## Keystore
@@ -118,3 +119,14 @@ intact. The keys inside are unchanged (same identities, npub, addresses).
 Old **backup copies** of the keystore still open with the old passphrase —
 if you rotated because the old one leaked, destroy or re-create old backups
 too, then make a fresh one.
+
+## USB keystores
+
+`keyring transfer NAME --to <path>` copies one identity into another
+keystore, creating it (with its own passphrase) if missing — the way to set
+up a USB drive as a portable identity. Collision rules: an identical
+identity is a no-op; the same name with a different key is refused. The
+write is fsynced and verified by re-opening the destination before success
+is reported. The launcher's IDENTITIES screen does the same via `u`, and
+`backpack --keyring <path>` runs directly against any keystore file — the
+run-from-USB flow (see [../deck/README.md](../deck/README.md)).

@@ -37,6 +37,8 @@ pub enum Error {
     NotFound(String),
     #[error("an identity named {0:?} already exists")]
     Duplicate(String),
+    #[error("an identity named {0:?} exists with a DIFFERENT key — rename one first")]
+    Conflict(String),
     #[error("invalid identity name: {0}")]
     BadName(&'static str),
     #[error("malformed {0} string")]
@@ -316,6 +318,9 @@ impl KeyStore {
         }
         let tmp = self.path.with_extension("tmp");
         std::fs::write(&tmp, &sealed)?;
+        // fsync before rename: on FAT (USB drives) a yank right after rename
+        // must not leave a truncated store.
+        std::fs::File::open(&tmp)?.sync_all()?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
     }
@@ -361,6 +366,28 @@ impl KeyStore {
             return Ok(false);
         }
         kp.btc_seed = Some(gen_seed());
+        Ok(true)
+    }
+
+    /// Copy an identity from another store into this one.
+    ///
+    /// Rules: an identity with the same name and the same signing key is a
+    /// no-op (`Ok(false)`); the same name with a DIFFERENT key is refused —
+    /// silently overwriting keys is how coins and identities get lost.
+    pub fn adopt(&mut self, from: &KeyPair) -> Result<bool> {
+        if let Some(existing) = self.get(from.name()) {
+            if existing.public().ed == from.public().ed {
+                return Ok(false);
+            }
+            return Err(Error::Conflict(from.name().to_string()));
+        }
+        self.entries.push(KeyPair {
+            name: from.name.clone(),
+            ed_sk: Zeroizing::new(*from.ed_sk),
+            x_sk: Zeroizing::new(*from.x_sk),
+            nostr_sk: from.nostr_sk.as_ref().map(|k| Zeroizing::new(**k)),
+            btc_seed: from.btc_seed.as_ref().map(|k| Zeroizing::new(**k)),
+        });
         Ok(true)
     }
 
@@ -557,6 +584,43 @@ mod tests {
         assert!(!store.btc_init("old").unwrap());
         assert!(store.get("old").unwrap().btc_seed().is_some());
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn adopt_copies_and_enforces_collision_rules() {
+        let (src_path, dst_path) = (temp_path(), temp_path());
+        let mut src = KeyStore::open(&src_path, b"srcpw").unwrap();
+        src.generate("alice").unwrap();
+        let alice_fp = src.get("alice").unwrap().public().fingerprint();
+
+        // Copy into a fresh store under a different passphrase.
+        let mut dst = KeyStore::open(&dst_path, b"usbpw").unwrap();
+        assert!(dst.adopt(src.get("alice").unwrap()).unwrap());
+        dst.save(b"usbpw").unwrap();
+
+        // Full identity travelled: signing key, nostr, bitcoin seed.
+        let reopened = KeyStore::open(&dst_path, b"usbpw").unwrap();
+        let copy = reopened.get("alice").unwrap();
+        assert_eq!(copy.public().fingerprint(), alice_fp);
+        assert_eq!(
+            copy.nostr_secret().unwrap(),
+            src.get("alice").unwrap().nostr_secret().unwrap()
+        );
+        assert_eq!(
+            copy.btc_seed().unwrap(),
+            src.get("alice").unwrap().btc_seed().unwrap()
+        );
+
+        // Same identity again: no-op, not an error.
+        let mut dst = KeyStore::open(&dst_path, b"usbpw").unwrap();
+        assert!(!dst.adopt(src.get("alice").unwrap()).unwrap());
+
+        // Same name, different key: refused.
+        let impostor = KeyPair::generate("alice").unwrap();
+        assert!(matches!(dst.adopt(&impostor), Err(Error::Conflict(_))));
+
+        std::fs::remove_file(&src_path).ok();
+        std::fs::remove_file(&dst_path).ok();
     }
 
     #[test]

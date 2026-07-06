@@ -6,8 +6,11 @@ back to a bash prompt, and the keystore passphrase is entered in a masked
 in-TUI prompt.
 
 ```sh
-backpack
+backpack                                     # default keystore
+backpack --keyring /media/usb/keyring.veil   # run from a USB keystore
 ```
+
+The unlock screen always shows which keystore file it is opening.
 
 ## Flow
 
@@ -25,7 +28,7 @@ backpack
 
 | Screen | What it does |
 |--------|--------------|
-| IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `c` copies the npub to the clipboard; `n` adds a Nostr key to a pre-Nostr identity; `p` changes the keystore passphrase (verifies the current one, then re-seals). |
+| IDENTITIES | List/generate/export/delete identities; shows fingerprint, public line, and npub. `c` copies the npub to the clipboard; `n` adds a Nostr key to a pre-Nostr identity; `p` changes the keystore passphrase (verifies the current one, then re-seals); `u` copies the selected identity to another keystore (USB flow — destination created if missing, write verified). |
 | NOSTR | TIMELINE (scrollable notes from everyone you follow, petname labels), POST (explicit *public + permanent* y/n confirm), FETCH (one author), FOLLOW/FOLLOWS (manage your relay-stored contact list; `d` unfollows with confirm, `c` copies an npub), EXPLORE (graph-based follow suggestions ranked by popularity; `f` follows the selected account, `c` copies its npub), MESSAGES (read/decrypt your NIP-04 DMs, scrollable, partner names), SEND DM (encrypted message with a metadata-warning y/n confirm), PROFILE (view/edit your kind-0 — prefilled form, merge-safe publish), WHOAMI (npub), SIGNER (act as a NIP-46 bunker — shows a copyable bunker:// URL and a live request log; the key never leaves the deck; Esc stops it). Results scroll with `j/k`/PgUp/PgDn. |
 | VEIL | Encrypt/decrypt with a passphrase or to/with an identity. Output names auto-derive; writes are atomic. |
 | SCRUB | Scan a file, show exactly what metadata would be removed, then write a `.clean.` copy on confirm. |

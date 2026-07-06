@@ -28,6 +28,25 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    // `backpack --keyring /media/usb/keyring.veil` runs against any keystore
+    // (the run-from-USB flow); it simply sets the same env var Session reads.
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--keyring" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--keyring needs a path"))?;
+                std::env::set_var(keyring::PATH_ENV, path);
+            }
+            "--help" | "-h" => {
+                println!("backpack [--keyring <path>]");
+                println!("  --keyring  open this keystore file (e.g. a USB drive)");
+                return Ok(());
+            }
+            other => anyhow::bail!("unknown argument {other:?} (try --help)"),
+        }
+    }
     let mut app = App::new();
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app);

@@ -112,6 +112,8 @@ pub enum IdMode {
     },
     /// Changing the keystore passphrase (current, new, confirm — all masked).
     Passwd(Form),
+    /// Copying the selected identity to another keystore (USB flow).
+    Transfer(Form),
 }
 
 pub struct IdentitiesState {
@@ -662,6 +664,17 @@ impl App {
                     KeyCode::Char('x') if !session.identities().is_empty() => {
                         st.mode = IdMode::RevealConfirm;
                     }
+                    KeyCode::Char('u') if !session.identities().is_empty() => {
+                        st.mode = IdMode::Transfer(Form::new(
+                            "copy identity to another keystore",
+                            vec![
+                                Field::new("destination keystore path")
+                                    .with_placeholder("/media/usb/keyring.veil"),
+                                Field::masked("destination passphrase"),
+                                Field::masked("confirm (only if creating it)"),
+                            ],
+                        ));
+                    }
                     KeyCode::Char('p') => {
                         st.mode = IdMode::Passwd(Form::new(
                             "change keystore passphrase",
@@ -692,6 +705,17 @@ impl App {
                             Err(e) => form.error = Some(format!("{e}")),
                         }
                     }
+                },
+                IdMode::Transfer(form) => match form.on_key(code) {
+                    FormEvent::Cancel => st.mode = IdMode::List,
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => match transfer_identity(session, st.selected, form) {
+                        Ok(msg) => {
+                            st.status = msg;
+                            st.mode = IdMode::List;
+                        }
+                        Err(e) => form.error = Some(format!("{e}")),
+                    },
                 },
                 IdMode::Passwd(form) => match form.on_key(code) {
                     FormEvent::Cancel => st.mode = IdMode::List,
@@ -2879,6 +2903,55 @@ fn verify_file(form: &Form) -> Result<Vec<String>> {
     }
 }
 
+fn transfer_identity(session: &Session, selected: usize, form: &Form) -> Result<String> {
+    let name = session
+        .identities()
+        .get(selected)
+        .map(|i| i.name.clone())
+        .ok_or_else(|| anyhow!("no identity selected"))?;
+    let kp = session
+        .store
+        .get(&name)
+        .ok_or_else(|| anyhow!("no identity named {name:?}"))?;
+
+    let dest = std::path::PathBuf::from(form.value(0));
+    if form.value(0).trim().is_empty() {
+        bail!("destination path required");
+    }
+    let pass = form.value(1);
+    if pass.is_empty() {
+        bail!("destination passphrase required");
+    }
+    let creating = !dest.exists();
+    if creating && pass != form.value(2) {
+        bail!("creating a new keystore: passphrases must match");
+    }
+
+    let mut dst = keyring::KeyStore::open(&dest, pass.as_bytes())?;
+    if !dst.adopt(kp)? {
+        return Ok(format!("{name} already in {}", dest.display()));
+    }
+    dst.save(pass.as_bytes())?;
+
+    // Read-back verification before claiming success (USB drives get yanked).
+    let check = keyring::KeyStore::open(&dest, pass.as_bytes())?;
+    let ok = check
+        .get(&name)
+        .is_some_and(|c| c.public().ed == kp.public().ed);
+    if !ok {
+        bail!("verification failed after write — do not trust the copy");
+    }
+    Ok(format!(
+        "copied {name} to {} — verified ✓{}",
+        dest.display(),
+        if creating {
+            " (new keystore created)"
+        } else {
+            ""
+        }
+    ))
+}
+
 fn canary_new(session: &Session, form: &Form) -> Result<Vec<String>> {
     let identity = form.value(0);
     let statement = form.value(1);
@@ -3478,6 +3551,62 @@ mod tests {
             "max must queue a sweep"
         );
         std::fs::remove_file(&store).ok();
+    }
+
+    #[test]
+    fn transfer_identity_to_usb_keystore() {
+        let _guard = env_lock();
+        let path = fresh_store_env();
+        let usb = std::env::temp_dir().join(format!(
+            "usb-keystore-{}-{:?}.veil",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::remove_file(&usb).ok();
+
+        let mut app = unlocked_app();
+        app.on_key(KeyCode::Enter); // IDENTITIES
+        app.on_key(KeyCode::Char('g'));
+        type_str(&mut app, "alice");
+        app.on_key(KeyCode::Enter);
+
+        // u -> destination path + new passphrase twice (creating).
+        app.on_key(KeyCode::Char('u'));
+        type_str(&mut app, &usb.to_string_lossy());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "usbpw");
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "usbpw");
+        app.on_key(KeyCode::Enter);
+        match &app.screen {
+            Screen::Identities(st) => {
+                assert!(matches!(st.mode, IdMode::List));
+                assert!(st.status.contains("verified"), "{}", st.status);
+            }
+            _ => panic!("wrong screen"),
+        }
+
+        // The USB store opens standalone with its own passphrase.
+        let usb_store = keyring::KeyStore::open(&usb, b"usbpw").unwrap();
+        assert!(usb_store.get("alice").is_some());
+        assert!(usb_store.get("alice").unwrap().btc_seed().is_some());
+
+        // Copying again is a friendly no-op.
+        app.on_key(KeyCode::Char('u'));
+        type_str(&mut app, &usb.to_string_lossy());
+        app.on_key(KeyCode::Enter);
+        type_str(&mut app, "usbpw");
+        app.on_key(KeyCode::Enter);
+        app.on_key(KeyCode::Enter); // confirm blank (store exists)
+        match &app.screen {
+            Screen::Identities(st) => {
+                assert!(st.status.contains("already"), "{}", st.status)
+            }
+            _ => panic!("wrong screen"),
+        }
+
+        std::fs::remove_file(&usb).ok();
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

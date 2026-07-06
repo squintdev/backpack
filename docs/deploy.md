@@ -104,3 +104,10 @@ Keystore/passphrase unlocks run Argon2id at 64 MiB / 3 passes:
 These parameters are compile-time constants in `bp-core::kdf`; lower `M_COST_KIB`
 if you target very small boards (that weakens brute-force resistance — see the
 threat model in the [README](../README.md)).
+
+## Prebuilt binaries & the deck scripts
+
+CI builds static musl binaries (aarch64, armv7, x86_64) on every `v*` tag —
+see GitHub Releases. `deck/build-sd.sh` assembles a boot-into-backpack Arch
+Linux ARM SD card and `deck/install-backpack.sh` installs the latest release
+(or builds from source) — see [../deck/README.md](../deck/README.md).

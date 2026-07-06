@@ -69,6 +69,15 @@ enum Cmd {
     BtcInit { name: String },
     /// Change the keystore passphrase (re-seals the store file).
     Passwd,
+    /// Copy an identity into another keystore (e.g. a USB drive).
+    /// Creates the destination store if it does not exist.
+    Transfer {
+        /// Identity to copy.
+        name: String,
+        /// Destination keystore file, e.g. /media/usb/keyring.veil
+        #[arg(long)]
+        to: PathBuf,
+    },
     /// Sign a file (or stdin) with an identity's signing key.
     Sign {
         #[arg(short, long)]
@@ -101,6 +110,7 @@ fn run() -> Result<()> {
         Cmd::NostrInit { name } => cmd_nostr_init(&cli, name),
         Cmd::BtcInit { name } => cmd_btc_init(&cli, name),
         Cmd::Passwd => cmd_passwd(&cli),
+        Cmd::Transfer { name, to } => cmd_transfer(&cli, name, to),
         Cmd::Sign { key, input } => cmd_sign(&cli, key, input.as_ref()),
         Cmd::Verify {
             pubfile,
@@ -213,6 +223,61 @@ fn cmd_passwd(cli: &Cli) -> Result<()> {
     store.save(new1.as_bytes())?;
     println!("passphrase changed");
     println!("note: any old backup copies of the keystore still open with the old passphrase");
+    Ok(())
+}
+
+fn cmd_transfer(cli: &Cli, name: &str, to: &std::path::Path) -> Result<()> {
+    let src_path = store_path(cli)?;
+    let src_pass = passphrase(false)?;
+    let src = KeyStore::open(&src_path, src_pass.as_bytes())?;
+    let kp = src
+        .get(name)
+        .ok_or_else(|| anyhow!("no identity named {name:?}"))?;
+
+    let creating = !to.exists();
+    if creating {
+        eprintln!("creating a new keystore at {}", to.display());
+        eprintln!("pick a strong passphrase — whoever holds the file can brute-force a weak one");
+    }
+    let dst_pass = {
+        let p1 = rpassword::prompt_password("Destination keystore passphrase: ")
+            .context("reading passphrase")?;
+        if creating {
+            if p1.is_empty() {
+                bail!("passphrase must not be empty");
+            }
+            let p2 = rpassword::prompt_password("Confirm destination passphrase: ")
+                .context("reading passphrase")?;
+            if p1 != p2 {
+                bail!("passphrases do not match");
+            }
+        }
+        Zeroizing::new(p1)
+    };
+
+    let mut dst = KeyStore::open(to, dst_pass.as_bytes())?;
+    let added = dst.adopt(kp)?;
+    if !added {
+        println!("{name} is already in {} — nothing to do", to.display());
+        return Ok(());
+    }
+    dst.save(dst_pass.as_bytes())?;
+
+    // Read-back verification: USB drives get yanked; only report success
+    // after the file on disk provably decrypts and contains the identity.
+    let check = KeyStore::open(to, dst_pass.as_bytes())?;
+    let copied = check
+        .get(name)
+        .ok_or_else(|| anyhow!("verification failed: {name} missing after write"))?;
+    if copied.public().ed != kp.public().ed {
+        bail!("verification failed: key mismatch after write");
+    }
+    println!(
+        "copied {name} [{}] to {}",
+        copied.public().fingerprint(),
+        to.display()
+    );
+    println!("verified: the destination store decrypts and contains the identity");
     Ok(())
 }
 
