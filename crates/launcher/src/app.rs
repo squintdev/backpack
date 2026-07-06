@@ -130,6 +130,7 @@ pub enum NostrMode {
         status: String,
     },
     RelayAdd(Form),
+    RebroadcastWho(Form),
     Whoami(Form),
     Post(Form),
     ConfirmPost {
@@ -389,6 +390,9 @@ pub enum Pending {
     },
     NostrRelayTest {
         relays: Vec<String>,
+    },
+    NostrRebroadcast {
+        identity: String,
     },
     SatsAddress {
         identity: String,
@@ -944,7 +948,22 @@ impl App {
                             relays: relays.clone(),
                         });
                     }
+                    KeyCode::Char('b') => {
+                        *mode = NostrMode::RebroadcastWho(Form::new(
+                            "push my history to all relays",
+                            vec![Field::new("identity").with_value(&first)],
+                        ));
+                    }
                     _ => {}
+                },
+                NostrMode::RebroadcastWho(form) => match form.on_key(code) {
+                    FormEvent::Cancel => *mode = NostrMode::Menu(11),
+                    FormEvent::Editing => {}
+                    FormEvent::Submit => {
+                        queue = Some(Pending::NostrRebroadcast {
+                            identity: form.value(0).to_string(),
+                        });
+                    }
                 },
                 NostrMode::RelayAdd(form) => match form.on_key(code) {
                     FormEvent::Cancel => {
@@ -2134,6 +2153,21 @@ impl App {
                             copy: None,
                             scroll: 0,
                         },
+                    };
+                }
+            }
+            Pending::NostrRebroadcast { identity } => {
+                let result = session.nostr_key(&identity).and_then(|sk| {
+                    let me = bp_nostr::event::pubkey_hex(&sk).map_err(|e| anyhow!(e))?;
+                    let relays = bp_nostr::client::resolve_relays(&[]);
+                    bp_nostr::client::rebroadcast(&relays, &me).map_err(|e| anyhow!(e))
+                });
+                if let Screen::Nostr(mode) = &mut self.screen {
+                    *mode = NostrMode::Results {
+                        title: "rebroadcast".into(),
+                        lines: result.unwrap_or_else(|e| vec![format!("failed: {e}")]),
+                        copy: None,
+                        scroll: 0,
                     };
                 }
             }

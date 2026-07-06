@@ -160,6 +160,62 @@ fn connect_with_timeout(url: &str, read_timeout: Duration) -> IoResult<Socket> {
     Ok(socket)
 }
 
+/// Re-publish a user's existing events (profile, notes, contact list) to
+/// every relay in the list — how history reaches newly added relays, since
+/// relays never sync with each other. Events are signed and immutable, so
+/// re-submitting is byte-identical: same ids, same timestamps.
+///
+/// Returns human-readable report lines.
+pub fn rebroadcast(relays: &[String], author_hex: &str) -> IoResult<Vec<String>> {
+    let filter = Filter {
+        authors: Some(vec![author_hex.to_string()]),
+        kinds: Some(vec![0, 1, 3]),
+        p_tags: None,
+        since: None,
+        limit: Some(1000),
+    };
+    let events = fetch_all(relays, &filter)?;
+    if events.is_empty() {
+        return Ok(vec!["no events found on the current relays".into()]);
+    }
+
+    let mut lines = vec![format!(
+        "found {} event(s) (notes, profile, contacts)",
+        events.len()
+    )];
+    for relay in relays {
+        let (mut accepted, mut dup, mut failed) = (0u32, 0u32, 0u32);
+        let mut last_err = String::new();
+        for ev in &events {
+            match publish_to(relay, ev) {
+                Ok(msg) => {
+                    if msg.contains("duplicate") {
+                        dup += 1;
+                    } else {
+                        accepted += 1;
+                    }
+                }
+                Err(e) => {
+                    // Relays commonly reject re-submissions of stored events
+                    // with "duplicate:" — that is success for our purposes.
+                    if e.contains("duplicate") {
+                        dup += 1;
+                    } else {
+                        failed += 1;
+                        last_err = e;
+                    }
+                }
+            }
+        }
+        let mut line = format!("{relay}: {accepted} new, {dup} already there");
+        if failed > 0 {
+            line.push_str(&format!(", {failed} failed ({last_err})"));
+        }
+        lines.push(line);
+    }
+    Ok(lines)
+}
+
 /// Publish one event to one relay and wait for the matching `OK`.
 /// Returns the relay's message on acceptance.
 pub fn publish_to(url: &str, ev: &Event) -> IoResult<String> {

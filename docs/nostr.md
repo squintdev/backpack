@@ -22,6 +22,7 @@ nostr dm      --identity NAME <npub|hex> "text"   # send an encrypted DM
 nostr dms     --identity NAME [--limit N]         # read your DMs
 nostr explore --identity NAME [--limit N]         # suggested accounts to follow
 nostr export-key --identity NAME --yes            # print the PRIVATE key (nsec)
+nostr rebroadcast --identity alice                # push my history to all relays
 nostr bunker  --identity NAME                     # act as a NIP-46 remote signer
 ```
 

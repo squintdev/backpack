@@ -131,6 +131,12 @@ enum Cmd {
         #[arg(long, default_value_t = 20)]
         limit: u32,
     },
+    /// Re-publish your existing notes/profile/contacts to every configured
+    /// relay — pushes your history onto newly added relays.
+    Rebroadcast {
+        #[arg(long)]
+        identity: String,
+    },
     /// Act as a NIP-46 remote signer (bunker). Prints a bunker:// URL to paste
     /// into a Nostr client, then signs its requests. Ctrl-C to stop.
     Bunker {
@@ -190,6 +196,7 @@ fn run() -> Result<()> {
         Cmd::Dm { identity, to, text } => run_dm(identity, to, text, &relays),
         Cmd::Dms { identity, limit } => run_dms(identity, *limit, &relays),
         Cmd::Explore { identity, limit } => run_explore(identity, *limit, &relays),
+        Cmd::Rebroadcast { identity } => run_rebroadcast(identity, &relays),
         Cmd::Bunker { identity } => run_bunker(identity, &relays),
         Cmd::ExportKey { identity, yes } => run_export_key(identity, *yes),
         Cmd::SetProfile {
@@ -266,6 +273,16 @@ fn run_export_key(identity: &str, yes: bool) -> Result<()> {
     eprintln!("SECRET KEY for {identity:?} — do not share; treat like a master password:");
     // Only the nsec goes to stdout, so piping/redirecting captures just the key.
     println!("{}", &*nsec);
+    Ok(())
+}
+
+fn run_rebroadcast(identity: &str, relays: &[String]) -> Result<()> {
+    let sk = load_nostr_key(identity)?;
+    let me = pubkey_hex(&sk)?;
+    eprintln!("rebroadcasting to {} relay(s)…", relays.len());
+    for line in bp_nostr::client::rebroadcast(relays, &me).map_err(|e| anyhow!(e))? {
+        println!("{line}");
+    }
     Ok(())
 }
 

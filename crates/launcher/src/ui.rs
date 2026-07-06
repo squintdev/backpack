@@ -186,6 +186,7 @@ fn mode_keys_nostr(mode: &NostrMode) -> &'static [(&'static str, &'static str)] 
             ("a", "add"),
             ("d", "remove"),
             ("t", "test all"),
+            ("b", "push history"),
             ("esc", "back"),
         ],
         _ => &[("tab", "next field"), ("enter", "go"), ("esc", "back")],
@@ -437,7 +438,9 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
         | NostrMode::FollowsForm(form)
         | NostrMode::ProfileWho(form) => render_form_page(f, area, form),
         NostrMode::ProfileEdit { form, .. } => render_form_page(f, area, form),
-        NostrMode::SignerWho(form) | NostrMode::RelayAdd(form) => render_form_page(f, area, form),
+        NostrMode::SignerWho(form)
+        | NostrMode::RelayAdd(form)
+        | NostrMode::RebroadcastWho(form) => render_form_page(f, area, form),
         NostrMode::Relays {
             relays,
             selected,
