@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "bp-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "chacha20poly1305",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "bp-nostr"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "anyhow",
@@ -332,7 +332,7 @@ checksum = "8ae3f5d315924270530207e2a68396c3cc547f6dca3fbdca317cfb1a51edb593"
 
 [[package]]
 name = "canary"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -1346,7 +1346,7 @@ dependencies = [
 
 [[package]]
 name = "keyring"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bp-core",
@@ -1368,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "launcher"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64",
@@ -1978,7 +1978,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sats"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bitcoin",
@@ -2001,7 +2001,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scrub"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "split"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2220,7 +2220,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stamp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2549,7 +2549,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "veil"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "bp-core",
