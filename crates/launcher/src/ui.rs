@@ -588,9 +588,17 @@ fn render_nostr(f: &mut Frame, area: Rect, mode: &NostrMode) {
 }
 
 fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerState>) {
+    // The header must fit however many lines the bunker URL wraps to at the
+    // current width — a fixed height clipped the URL entirely once the relay
+    // list grew. +5 = signing-as line, blank, caption, borders.
+    let inner_w = area.width.saturating_sub(2).max(1) as usize;
+    let url_lines = signer
+        .map(|s| s.url.len().div_ceil(inner_w) as u16)
+        .unwrap_or(1);
+    let header_h = (url_lines + 5).min(area.height.saturating_sub(3));
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(6), Constraint::Min(3)])
+        .constraints([Constraint::Length(header_h), Constraint::Min(3)])
         .split(area);
 
     let Some(s) = signer else {
@@ -603,12 +611,20 @@ fn render_signer(f: &mut Frame, area: Rect, signer: Option<&crate::app::SignerSt
         return;
     };
 
+    let relay_summary = {
+        let n = s.relay.split(',').count();
+        if n == 1 {
+            s.relay.clone()
+        } else {
+            format!("{n} relays (see log)")
+        }
+    };
     let head = vec![
         Line::from(vec![
             Span::styled("signing as ", dim()),
             Span::styled(s.identity.clone(), accent()),
-            Span::styled("   relays ", dim()),
-            Span::styled(s.relay.clone(), accent()),
+            Span::styled("   on ", dim()),
+            Span::styled(relay_summary, accent()),
         ]),
         Line::from(""),
         Line::from(Span::styled(
