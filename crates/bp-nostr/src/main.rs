@@ -272,7 +272,7 @@ fn run_export_key(identity: &str, yes: bool) -> Result<()> {
     let nsec = nsec_encode(&sk);
     eprintln!("SECRET KEY for {identity:?} — do not share; treat like a master password:");
     // Only the nsec goes to stdout, so piping/redirecting captures just the key.
-    println!("{}", &*nsec);
+    println!("{}", *nsec);
     Ok(())
 }
 
